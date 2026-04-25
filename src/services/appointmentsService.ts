@@ -7,6 +7,21 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
+export async function getAllAppointments(businessId: string) {
+  const { data, error } = await supabase
+    .from("appointments")
+    .select(`id, appointment_date, start_time, end_time, charged_amount, discount, payment_status, clients(name), services(name)`)
+    .eq("business_id", businessId)
+    .order("appointment_date", { ascending: false })
+    .order("start_time", { ascending: false });
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((a: any) => ({
+    ...a,
+    clients: Array.isArray(a.clients) ? (a.clients[0] ?? null) : a.clients,
+    services: Array.isArray(a.services) ? (a.services[0] ?? null) : a.services,
+  }));
+}
+
 export async function getAppointmentsByDate(businessId: string, date: string) {
   const { data, error } = await supabase
     .from("appointments")
@@ -27,5 +42,14 @@ export async function getAppointmentsByDate(businessId: string, date: string) {
     .order("start_time", { ascending: true });
 
   if (error) throw new Error(error.message);
-  return data ?? [];
+
+  return (data ?? []).map((appt: any) => ({
+    ...appt,
+    clients: Array.isArray(appt.clients)
+      ? (appt.clients[0] ?? null)
+      : appt.clients,
+    services: Array.isArray(appt.services)
+      ? (appt.services[0] ?? null)
+      : appt.services,
+  }));
 }

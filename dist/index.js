@@ -9,6 +9,7 @@ const dotenv_1 = __importDefault(require("dotenv"));
 const path_1 = __importDefault(require("path"));
 const dashboard_1 = require("./routes/dashboard");
 const appointments_1 = require("./routes/appointments");
+const clients_1 = require("./routes/clients");
 dotenv_1.default.config({ path: path_1.default.resolve(__dirname, "../.env") });
 const app = (0, express_1.default)();
 const PORT = process.env.PORT || 3001;
@@ -19,6 +20,7 @@ app.get("/api/health", (req, res) => {
 });
 app.use("/api/dashboard", dashboard_1.dashboardRouter);
 app.use("/api/appointments", appointments_1.appointmentsRouter);
+app.use("/api/clients", clients_1.clientsRouter);
 app.listen(PORT, () => {
     console.log(`Backend rodando na porta ${PORT}`);
 });
