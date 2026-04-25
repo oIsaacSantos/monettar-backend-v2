@@ -7,6 +7,38 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
+export async function updateAppointment(
+  id: string,
+  businessId: string,
+  payload: {
+    serviceId?: string;
+    date?: string;
+    startTime?: string;
+    endTime?: string;
+    chargedAmount?: number;
+    paymentStatus?: string;
+    notes?: string;
+  }
+) {
+  const { data, error } = await supabase
+    .from("appointments")
+    .update({
+      service_id: payload.serviceId,
+      appointment_date: payload.date,
+      start_time: payload.startTime,
+      end_time: payload.endTime,
+      charged_amount: payload.chargedAmount,
+      payment_status: payload.paymentStatus,
+      notes: payload.notes,
+    })
+    .eq("id", id)
+    .eq("business_id", businessId)
+    .select()
+    .single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
 export async function getAllAppointments(businessId: string) {
   const { data, error } = await supabase
     .from("appointments")

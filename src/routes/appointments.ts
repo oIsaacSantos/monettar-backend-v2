@@ -1,7 +1,18 @@
 import { Router, Request, Response } from "express";
-import { getAllAppointments, getAppointmentsByDate } from "../services/appointmentsService";
+import { getAllAppointments, getAppointmentsByDate, updateAppointment } from "../services/appointmentsService";
 
 export const appointmentsRouter = Router();
+
+appointmentsRouter.put("/:id", async (req: Request, res: Response) => {
+  const { businessId } = req.query;
+  const { id } = req.params;
+  if (!businessId) { res.status(400).json({ error: "businessId obrigatório" }); return; }
+  try {
+    res.json(await updateAppointment(id, businessId as string, req.body));
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 appointmentsRouter.get("/all", async (req: Request, res: Response) => {
   const { businessId } = req.query;
