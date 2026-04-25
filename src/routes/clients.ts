@@ -2,6 +2,17 @@ import { Router, Request, Response } from "express";
 
 export const clientsRouter = Router();
 
+clientsRouter.get("/with-stats", async (req: Request, res: Response) => {
+  const { businessId } = req.query;
+  if (!businessId) { res.status(400).json({ error: "businessId obrigatório" }); return; }
+  try {
+    const { getClientsWithStats } = await import("../services/clientsService");
+    res.json(await getClientsWithStats(businessId as string));
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 clientsRouter.post("/", async (req: Request, res: Response) => {
   const { businessId } = req.query;
 

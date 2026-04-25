@@ -36,6 +36,20 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.clientsRouter = void 0;
 const express_1 = require("express");
 exports.clientsRouter = (0, express_1.Router)();
+exports.clientsRouter.get("/with-stats", async (req, res) => {
+    const { businessId } = req.query;
+    if (!businessId) {
+        res.status(400).json({ error: "businessId obrigatório" });
+        return;
+    }
+    try {
+        const { getClientsWithStats } = await Promise.resolve().then(() => __importStar(require("../services/clientsService")));
+        res.json(await getClientsWithStats(businessId));
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
 exports.clientsRouter.post("/", async (req, res) => {
     const { businessId } = req.query;
     if (!businessId) {
