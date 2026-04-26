@@ -5,6 +5,7 @@ import path from "path";
 import { dashboardRouter } from "./routes/dashboard";
 import { appointmentsRouter } from "./routes/appointments";
 import { clientsRouter } from "./routes/clients";
+import { servicesRouter } from "./routes/services";
 
 dotenv.config({ path: path.resolve(__dirname, "../.env") });
 
@@ -21,6 +22,7 @@ app.get("/api/health", (req, res) => {
 app.use("/api/dashboard", dashboardRouter);
 app.use("/api/appointments", appointmentsRouter);
 app.use("/api/clients", clientsRouter);
+app.use("/api/services", servicesRouter);
 
 app.listen(PORT, () => {
   console.log(`Backend rodando na porta ${PORT}`);

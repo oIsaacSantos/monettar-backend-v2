@@ -17,7 +17,7 @@ export async function getDashboardSummary(businessId: string) {
 
   const { data: appointments } = await supabase
     .from("appointments")
-    .select("charged_amount, discount, appointment_date, services(material_cost_estimate)")
+    .select("charged_amount, discount, appointment_date, service_id, services(id, name, material_cost_estimate)")
     .eq("business_id", businessId);
 
   const { data: fixedCosts } = await supabase
@@ -35,11 +35,24 @@ export async function getDashboardSummary(businessId: string) {
   let monthRevenue = 0;
   let monthAppointments = 0;
 
+  const serviceMap = new Map<string, {
+    serviceId: string | null;
+    name: string;
+    appointments: number;
+    revenue: number;
+    profit: number;
+  }>();
+
   for (const a of appointments ?? []) {
     const revenue = Number(a.charged_amount ?? 0) - Number(a.discount ?? 0);
-    const material = Number((a.services as any)?.material_cost_estimate ?? 0);
+    const svc = Array.isArray(a.services) ? a.services[0] : (a.services as any);
+    const material = Number(svc?.material_cost_estimate ?? 0);
+    const svcId = (a.service_id as string) ?? null;
+    const svcName = svc?.name ?? "Sem serviço";
+
     totalRevenue += revenue;
     totalMaterial += material;
+
     if (a.appointment_date === today) {
       todayRevenue += revenue;
       todayAppointments += 1;
@@ -48,6 +61,15 @@ export async function getDashboardSummary(businessId: string) {
       monthRevenue += revenue;
       monthAppointments += 1;
     }
+
+    const key = svcId ?? "__none__";
+    if (!serviceMap.has(key)) {
+      serviceMap.set(key, { serviceId: svcId, name: svcName, appointments: 0, revenue: 0, profit: 0 });
+    }
+    const entry = serviceMap.get(key)!;
+    entry.appointments += 1;
+    entry.revenue += revenue;
+    entry.profit += revenue - material;
   }
 
   const totalFixed = (fixedCosts ?? []).reduce((s, c) => s + Number(c.amount), 0);
@@ -61,6 +83,9 @@ export async function getDashboardSummary(businessId: string) {
   const proLabore = Number(business?.desired_pro_labore ?? 0);
   const reserve = monthRevenue * Number(business?.reserve_percent ?? 0) / 100;
   const workingCapital = monthRevenue * Number(business?.working_capital_percent ?? 0) / 100;
+
+  const servicesBreakdown = Array.from(serviceMap.values())
+    .sort((a, b) => b.revenue - a.revenue);
 
   return {
     businessId,
@@ -87,5 +112,6 @@ export async function getDashboardSummary(businessId: string) {
       totalAppointments: monthAppointments,
       totalProfit: monthRevenue - totalMaterial,
     },
+    servicesBreakdown,
   };
 }
