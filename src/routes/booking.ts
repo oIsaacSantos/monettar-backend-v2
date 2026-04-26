@@ -65,7 +65,7 @@ bookingRouter.get("/:slug/available-slots", async (req: Request, res: Response) 
 // Criar agendamento (múltiplos serviços)
 bookingRouter.post("/:slug/appointment", async (req: Request, res: Response) => {
   const { slug } = req.params;
-  const { phone, name, birthdate, gender, serviceIds, totalDuration, serviceId, date, startTime } = req.body;
+  const { phone, name, birthdate, gender, genderCustom, serviceIds, totalDuration, serviceId, date, startTime } = req.body;
 
   const ids: string[] = serviceIds ?? (serviceId ? [serviceId] : []);
   if (!ids.length) { res.status(400).json({ error: "serviceIds obrigatório" }); return; }
@@ -88,7 +88,7 @@ bookingRouter.post("/:slug/appointment", async (req: Request, res: Response) => 
     if (existing) {
       clientId = existing.id;
     } else {
-      const { data: newClient, error: clientError } = await supabase
+      const insertResult = await supabase
         .from("clients")
         .insert({
           business_id: business.id,
@@ -96,10 +96,24 @@ bookingRouter.post("/:slug/appointment", async (req: Request, res: Response) => 
           phone: normalized,
           birthdate: birthdate || null,
           gender: gender || null,
+          gender_custom: genderCustom || null,
         })
         .select().single();
-      if (clientError) throw new Error(clientError.message);
-      clientId = newClient.id;
+
+      let clientData = insertResult.data;
+      let clientErr = insertResult.error;
+
+      if (clientErr) {
+        const fallback = await supabase
+          .from("clients")
+          .insert({ business_id: business.id, name, phone: normalized })
+          .select().single();
+        clientData = fallback.data;
+        clientErr = fallback.error;
+      }
+
+      if (clientErr) throw new Error(clientErr.message);
+      clientId = clientData.id;
     }
 
     // Busca preços de todos os serviços selecionados

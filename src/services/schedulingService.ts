@@ -77,8 +77,10 @@ export async function getAvailableSlots(
 
   // Curadoria por faixa de antecedência
   const today = new Date();
-  const targetDate = new Date(date + "T12:00:00");
-  const daysAhead = Math.floor((targetDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+  const todayUTC = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
+  const [year, month, day] = date.split("-").map(Number);
+  const targetUTC = Date.UTC(year, month - 1, day);
+  const daysAhead = Math.floor((targetUTC - todayUTC) / (1000 * 60 * 60 * 24));
 
   let maxSlots: number;
   if (daysAhead <= 7) maxSlots = 2;
