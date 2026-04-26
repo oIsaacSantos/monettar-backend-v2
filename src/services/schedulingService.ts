@@ -22,7 +22,8 @@ export async function getAvailableSlots(
   businessId: string,
   date: string,
   durationMinutes: number,
-  period?: "morning" | "afternoon" | "evening"
+  period?: "morning" | "afternoon" | "evening",
+  bookingMode: boolean = false
 ) {
   const { data: business } = await supabase
     .from("businesses")
@@ -42,6 +43,7 @@ export async function getAvailableSlots(
     .eq("appointment_date", date)
     .not("payment_status", "eq", "cancelled");
 
+  const buffer = 10;
   const occupied = (appointments ?? []).map((a: any) => ({
     start: timeToMinutes(a.start_time),
     end: timeToMinutes(a.end_time),
@@ -63,7 +65,7 @@ export async function getAvailableSlots(
     const slotEnd = current + durationMinutes;
     const isLunch = current < lunchEnd && slotEnd > lunchStart;
     const isOccupied = occupied.some(
-      (o) => current < o.end && slotEnd > o.start
+      (o) => current < o.end + buffer && slotEnd > o.start - buffer
     );
     if (!isLunch && !isOccupied) {
       slots.push(minutesToTime(current));
@@ -71,5 +73,24 @@ export async function getAvailableSlots(
     current += 30;
   }
 
-  return slots;
+  if (!bookingMode) return slots;
+
+  // Curadoria por faixa de antecedência
+  const today = new Date();
+  const targetDate = new Date(date + "T12:00:00");
+  const daysAhead = Math.floor((targetDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+
+  let maxSlots: number;
+  if (daysAhead <= 7) maxSlots = 2;
+  else if (daysAhead <= 20) maxSlots = 3;
+  else maxSlots = 4;
+
+  if (slots.length <= maxSlots) return slots;
+
+  const step = Math.floor(slots.length / maxSlots);
+  const curated: string[] = [];
+  for (let i = 0; i < maxSlots; i++) {
+    curated.push(slots[Math.min(i * step, slots.length - 1)]);
+  }
+  return curated;
 }

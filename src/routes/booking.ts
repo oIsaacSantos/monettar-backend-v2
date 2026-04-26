@@ -50,7 +50,7 @@ bookingRouter.get("/:slug/services", async (req: Request, res: Response) => {
   res.json(data ?? []);
 });
 
-// Horários disponíveis
+// Horários disponíveis (com curadoria de booking)
 bookingRouter.get("/:slug/available-slots", async (req: Request, res: Response) => {
   const { slug } = req.params;
   const { date, duration, period } = req.query;
@@ -58,56 +58,84 @@ bookingRouter.get("/:slug/available-slots", async (req: Request, res: Response) 
     .from("businesses").select("id").eq("slug", slug).single();
   if (!business) { res.status(404).json({ error: "Negócio não encontrado" }); return; }
   const { getAvailableSlots } = await import("../services/schedulingService");
-  const slots = await getAvailableSlots(business.id, date as string, Number(duration), period as any);
+  const slots = await getAvailableSlots(business.id, date as string, Number(duration), period as any, true);
   res.json({ slots });
 });
 
-// Criar agendamento
+// Criar agendamento (múltiplos serviços)
 bookingRouter.post("/:slug/appointment", async (req: Request, res: Response) => {
   const { slug } = req.params;
-  const { phone, name, birthdate, serviceId, date, startTime } = req.body;
+  const { phone, name, birthdate, gender, serviceIds, totalDuration, serviceId, date, startTime } = req.body;
+
+  const ids: string[] = serviceIds ?? (serviceId ? [serviceId] : []);
+  if (!ids.length) { res.status(400).json({ error: "serviceIds obrigatório" }); return; }
+
   const { data: business } = await supabase
     .from("businesses").select("id").eq("slug", slug).single();
   if (!business) { res.status(404).json({ error: "Negócio não encontrado" }); return; }
+
   try {
     const normalized = phone.replace(/\D/g, "");
     let clientId: string;
+
     const { data: existing } = await supabase
       .from("clients")
       .select("id")
       .eq("business_id", business.id)
       .ilike("phone", `%${normalized.slice(-8)}%`)
       .single();
+
     if (existing) {
       clientId = existing.id;
     } else {
       const { data: newClient, error: clientError } = await supabase
         .from("clients")
-        .insert({ business_id: business.id, name, phone: normalized, birthdate: birthdate || null })
+        .insert({
+          business_id: business.id,
+          name,
+          phone: normalized,
+          birthdate: birthdate || null,
+          gender: gender || null,
+        })
         .select().single();
       if (clientError) throw new Error(clientError.message);
       clientId = newClient.id;
     }
-    const { data: service } = await supabase
-      .from("services").select("duration_minutes, current_price").eq("id", serviceId).single();
-    const duration = service?.duration_minutes ?? 60;
+
+    // Busca preços de todos os serviços selecionados
+    const { data: servicesData } = await supabase
+      .from("services")
+      .select("id, current_price, duration_minutes")
+      .in("id", ids);
+
+    const totalCharged = (servicesData ?? []).reduce(
+      (sum: number, s: any) => sum + Number(s.current_price), 0
+    );
+
+    // Duração total: usa totalDuration do body ou soma das durações dos serviços
+    const duration = totalDuration
+      ?? (servicesData ?? []).reduce((sum: number, s: any) => sum + Number(s.duration_minutes), 0)
+      ?? 60;
+
     const [h, m] = startTime.split(":").map(Number);
     const endDate = new Date(2000, 0, 1, h, m + duration);
     const endTime = `${String(endDate.getHours()).padStart(2, "0")}:${String(endDate.getMinutes()).padStart(2, "0")}`;
+
     const { data: appointment, error: apptError } = await supabase
       .from("appointments")
       .insert({
         business_id: business.id,
         client_id: clientId,
-        service_id: serviceId,
+        service_id: ids[0],
         appointment_date: date,
         start_time: startTime,
         end_time: endTime,
-        charged_amount: service?.current_price ?? 0,
+        charged_amount: totalCharged,
         discount: 0,
         payment_status: "pending",
       })
       .select().single();
+
     if (apptError) throw new Error(apptError.message);
     res.status(201).json({ appointment, clientId });
   } catch (err: any) {
