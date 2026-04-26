@@ -93,10 +93,11 @@ exports.bookingRouter.get("/:slug/services", async (req, res) => {
         .order("name");
     res.json(data ?? []);
 });
-// Horários disponíveis
+// Horários disponíveis (com curadoria de booking)
 exports.bookingRouter.get("/:slug/available-slots", async (req, res) => {
     const { slug } = req.params;
     const { date, duration, period } = req.query;
+    console.log("[booking] available-slots chamado — slug:", req.params.slug, "date:", date, "duration:", duration, "period:", period);
     const { data: business } = await supabase
         .from("businesses").select("id").eq("slug", slug).single();
     if (!business) {
@@ -104,13 +105,18 @@ exports.bookingRouter.get("/:slug/available-slots", async (req, res) => {
         return;
     }
     const { getAvailableSlots } = await Promise.resolve().then(() => __importStar(require("../services/schedulingService")));
-    const slots = await getAvailableSlots(business.id, date, Number(duration), period);
+    const slots = await getAvailableSlots(business.id, date, Number(duration), period, true);
     res.json({ slots });
 });
-// Criar agendamento
+// Criar agendamento (múltiplos serviços)
 exports.bookingRouter.post("/:slug/appointment", async (req, res) => {
     const { slug } = req.params;
-    const { phone, name, birthdate, serviceId, date, startTime } = req.body;
+    const { phone, name, birthdate, gender, genderCustom, serviceIds, totalDuration, serviceId, date, startTime } = req.body;
+    const ids = serviceIds ?? (serviceId ? [serviceId] : []);
+    if (!ids.length) {
+        res.status(400).json({ error: "serviceIds obrigatório" });
+        return;
+    }
     const { data: business } = await supabase
         .from("businesses").select("id").eq("slug", slug).single();
     if (!business) {
@@ -130,17 +136,41 @@ exports.bookingRouter.post("/:slug/appointment", async (req, res) => {
             clientId = existing.id;
         }
         else {
-            const { data: newClient, error: clientError } = await supabase
+            const insertResult = await supabase
                 .from("clients")
-                .insert({ business_id: business.id, name, phone: normalized, birthdate: birthdate || null })
+                .insert({
+                business_id: business.id,
+                name,
+                phone: normalized,
+                birthdate: birthdate || null,
+                gender: gender || null,
+                gender_custom: genderCustom || null,
+            })
                 .select().single();
-            if (clientError)
-                throw new Error(clientError.message);
-            clientId = newClient.id;
+            let clientData = insertResult.data;
+            let clientErr = insertResult.error;
+            if (clientErr) {
+                const fallback = await supabase
+                    .from("clients")
+                    .insert({ business_id: business.id, name, phone: normalized })
+                    .select().single();
+                clientData = fallback.data;
+                clientErr = fallback.error;
+            }
+            if (clientErr)
+                throw new Error(clientErr.message);
+            clientId = clientData.id;
         }
-        const { data: service } = await supabase
-            .from("services").select("duration_minutes, current_price").eq("id", serviceId).single();
-        const duration = service?.duration_minutes ?? 60;
+        // Busca preços de todos os serviços selecionados
+        const { data: servicesData } = await supabase
+            .from("services")
+            .select("id, current_price, duration_minutes")
+            .in("id", ids);
+        const totalCharged = (servicesData ?? []).reduce((sum, s) => sum + Number(s.current_price), 0);
+        // Duração total: usa totalDuration do body ou soma das durações dos serviços
+        const duration = totalDuration
+            ?? (servicesData ?? []).reduce((sum, s) => sum + Number(s.duration_minutes), 0)
+            ?? 60;
         const [h, m] = startTime.split(":").map(Number);
         const endDate = new Date(2000, 0, 1, h, m + duration);
         const endTime = `${String(endDate.getHours()).padStart(2, "0")}:${String(endDate.getMinutes()).padStart(2, "0")}`;
@@ -149,11 +179,11 @@ exports.bookingRouter.post("/:slug/appointment", async (req, res) => {
             .insert({
             business_id: business.id,
             client_id: clientId,
-            service_id: serviceId,
+            service_id: ids[0],
             appointment_date: date,
             start_time: startTime,
             end_time: endTime,
-            charged_amount: service?.current_price ?? 0,
+            charged_amount: totalCharged,
             discount: 0,
             payment_status: "pending",
         })

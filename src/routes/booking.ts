@@ -54,6 +54,7 @@ bookingRouter.get("/:slug/services", async (req: Request, res: Response) => {
 bookingRouter.get("/:slug/available-slots", async (req: Request, res: Response) => {
   const { slug } = req.params;
   const { date, duration, period } = req.query;
+  console.log("[booking] available-slots chamado — slug:", req.params.slug, "date:", date, "duration:", duration, "period:", period);
   const { data: business } = await supabase
     .from("businesses").select("id").eq("slug", slug).single();
   if (!business) { res.status(404).json({ error: "Negócio não encontrado" }); return; }

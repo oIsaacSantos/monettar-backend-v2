@@ -17,7 +17,7 @@ function minutesToTime(minutes) {
     const m = minutes % 60;
     return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
-async function getAvailableSlots(businessId, date, durationMinutes, period) {
+async function getAvailableSlots(businessId, date, durationMinutes, period, bookingMode = false) {
     const { data: business } = await supabase
         .from("businesses")
         .select("work_start_time, work_end_time")
@@ -33,6 +33,7 @@ async function getAvailableSlots(businessId, date, durationMinutes, period) {
         .eq("business_id", businessId)
         .eq("appointment_date", date)
         .not("payment_status", "eq", "cancelled");
+    const buffer = 10;
     const occupied = (appointments ?? []).map((a) => ({
         start: timeToMinutes(a.start_time),
         end: timeToMinutes(a.end_time),
@@ -49,11 +50,44 @@ async function getAvailableSlots(businessId, date, durationMinutes, period) {
     while (current + durationMinutes <= rangeEnd) {
         const slotEnd = current + durationMinutes;
         const isLunch = current < lunchEnd && slotEnd > lunchStart;
-        const isOccupied = occupied.some((o) => current < o.end && slotEnd > o.start);
+        const isOccupied = occupied.some((o) => current < o.end + buffer && slotEnd > o.start - buffer);
         if (!isLunch && !isOccupied) {
             slots.push(minutesToTime(current));
         }
         current += 30;
     }
-    return slots;
+    if (!bookingMode) {
+        console.log("[scheduling] bookingMode:", bookingMode);
+        console.log("[scheduling] slots disponíveis:", slots.length, slots);
+        return slots;
+    }
+    // Curadoria por faixa de antecedência
+    const today = new Date();
+    const todayUTC = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
+    const [year, month, day] = date.split("-").map(Number);
+    const targetUTC = Date.UTC(year, month - 1, day);
+    const daysAhead = Math.floor((targetUTC - todayUTC) / (1000 * 60 * 60 * 24));
+    let maxSlots;
+    if (daysAhead <= 7)
+        maxSlots = 2;
+    else if (daysAhead <= 20)
+        maxSlots = 3;
+    else
+        maxSlots = 4;
+    const curated = [];
+    if (slots.length <= maxSlots) {
+        curated.push(...slots);
+    }
+    else {
+        const step = Math.floor(slots.length / maxSlots);
+        for (let i = 0; i < maxSlots; i++) {
+            curated.push(slots[Math.min(i * step, slots.length - 1)]);
+        }
+    }
+    console.log("[scheduling] bookingMode:", bookingMode);
+    console.log("[scheduling] daysAhead:", daysAhead);
+    console.log("[scheduling] slots disponíveis:", slots.length, slots);
+    console.log("[scheduling] maxSlots:", maxSlots);
+    console.log("[scheduling] curated:", curated);
+    return curated;
 }

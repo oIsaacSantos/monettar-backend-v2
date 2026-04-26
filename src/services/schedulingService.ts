@@ -73,7 +73,11 @@ export async function getAvailableSlots(
     current += 30;
   }
 
-  if (!bookingMode) return slots;
+  if (!bookingMode) {
+    console.log("[scheduling] bookingMode:", bookingMode);
+    console.log("[scheduling] slots disponíveis:", slots.length, slots);
+    return slots;
+  }
 
   // Curadoria por faixa de antecedência
   const today = new Date();
@@ -87,12 +91,22 @@ export async function getAvailableSlots(
   else if (daysAhead <= 20) maxSlots = 3;
   else maxSlots = 4;
 
-  if (slots.length <= maxSlots) return slots;
-
-  const step = Math.floor(slots.length / maxSlots);
   const curated: string[] = [];
-  for (let i = 0; i < maxSlots; i++) {
-    curated.push(slots[Math.min(i * step, slots.length - 1)]);
+
+  if (slots.length <= maxSlots) {
+    curated.push(...slots);
+  } else {
+    const step = Math.floor(slots.length / maxSlots);
+    for (let i = 0; i < maxSlots; i++) {
+      curated.push(slots[Math.min(i * step, slots.length - 1)]);
+    }
   }
+
+  console.log("[scheduling] bookingMode:", bookingMode);
+  console.log("[scheduling] daysAhead:", daysAhead);
+  console.log("[scheduling] slots disponíveis:", slots.length, slots);
+  console.log("[scheduling] maxSlots:", maxSlots);
+  console.log("[scheduling] curated:", curated);
+
   return curated;
 }
