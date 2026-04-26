@@ -81,8 +81,10 @@ export async function getDashboardSummary(businessId: string) {
   const goalProgress = monthlyGoal > 0 ? monthRevenue / monthlyGoal : null;
 
   const proLabore = Number(business?.desired_pro_labore ?? 0);
-  const reserve = monthRevenue * Number(business?.reserve_percent ?? 0) / 100;
-  const workingCapital = monthRevenue * Number(business?.working_capital_percent ?? 0) / 100;
+  const reservePercent = Number(business?.reserve_percent ?? 0);
+  const workingCapitalPercent = Number(business?.working_capital_percent ?? 0);
+  const reserve = monthRevenue * reservePercent / 100;
+  const workingCapital = monthRevenue * workingCapitalPercent / 100;
 
   const servicesBreakdown = Array.from(serviceMap.values())
     .sort((a, b) => b.revenue - a.revenue);
@@ -113,5 +115,7 @@ export async function getDashboardSummary(businessId: string) {
       totalProfit: monthRevenue - totalMaterial,
     },
     servicesBreakdown,
+    reservePercent,
+    workingCapitalPercent,
   };
 }

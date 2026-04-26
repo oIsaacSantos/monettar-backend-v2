@@ -6,6 +6,8 @@ import { dashboardRouter } from "./routes/dashboard";
 import { appointmentsRouter } from "./routes/appointments";
 import { clientsRouter } from "./routes/clients";
 import { servicesRouter } from "./routes/services";
+import { fixedCostsRouter } from "./routes/fixedCosts";
+import { businessRouter } from "./routes/business";
 
 dotenv.config({ path: path.resolve(__dirname, "../.env") });
 
@@ -23,6 +25,8 @@ app.use("/api/dashboard", dashboardRouter);
 app.use("/api/appointments", appointmentsRouter);
 app.use("/api/clients", clientsRouter);
 app.use("/api/services", servicesRouter);
+app.use("/api/fixed-costs", fixedCostsRouter);
+app.use("/api/business", businessRouter);
 
 app.listen(PORT, () => {
   console.log(`Backend rodando na porta ${PORT}`);
