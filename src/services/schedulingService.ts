@@ -33,6 +33,10 @@ export async function getAvailableSlots(
 
   const workDays: number[] = (business?.work_days_of_week as number[] | null) ?? [1, 2, 3, 4, 5, 6];
   const targetDayOfWeek = new Date(date + "T12:00:00Z").getUTCDay();
+  console.log("[scheduling] business.work_days_of_week:", business?.work_days_of_week, typeof business?.work_days_of_week);
+  console.log("[scheduling] targetDayOfWeek:", targetDayOfWeek);
+  console.log("[scheduling] workDays:", workDays);
+  console.log("[scheduling] includes check:", workDays.includes(targetDayOfWeek));
   if (!workDays.includes(targetDayOfWeek)) {
     return [];
   }
