@@ -11,7 +11,7 @@ bookingRouter.get("/:slug/business", async (req: Request, res: Response) => {
   const { slug } = req.params;
   const { data, error } = await supabase
     .from("businesses")
-    .select("id, name, work_start_time, work_end_time")
+    .select("id, name, work_start_time, work_end_time, signal_type, signal_value")
     .eq("slug", slug)
     .single();
   if (error || !data) { res.status(404).json({ error: "Negócio não encontrado" }); return; }
