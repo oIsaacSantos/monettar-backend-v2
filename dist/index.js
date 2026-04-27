@@ -14,6 +14,7 @@ const services_1 = require("./routes/services");
 const fixedCosts_1 = require("./routes/fixedCosts");
 const business_1 = require("./routes/business");
 const booking_1 = require("./routes/booking");
+const payments_1 = require("./routes/payments");
 dotenv_1.default.config({ path: path_1.default.resolve(__dirname, "../.env") });
 const app = (0, express_1.default)();
 const PORT = process.env.PORT || 3001;
@@ -29,6 +30,7 @@ app.use("/api/services", services_1.servicesRouter);
 app.use("/api/fixed-costs", fixedCosts_1.fixedCostsRouter);
 app.use("/api/business", business_1.businessRouter);
 app.use("/api/booking", booking_1.bookingRouter);
+app.use("/api/payments", payments_1.paymentsRouter);
 app.listen(PORT, () => {
     console.log(`Backend rodando na porta ${PORT}`);
 });
