@@ -88,21 +88,12 @@ async function getAvailableSlots(businessId, date, durationMinutes, period, book
     else
         maxSlots = 4;
     const shuffled = [...slots].sort(() => Math.random() - 0.5);
-    const morning = shuffled.filter((t) => parseInt(t) < 12);
-    const afternoon = shuffled.filter((t) => parseInt(t) >= 12);
-    const curated = [];
-    const halfMax = Math.ceil(maxSlots / 2);
-    curated.push(...morning.slice(0, halfMax));
-    curated.push(...afternoon.slice(0, maxSlots - curated.length));
-    if (curated.length < maxSlots) {
-        const remaining = shuffled.filter((t) => !curated.includes(t));
-        curated.push(...remaining.slice(0, maxSlots - curated.length));
-    }
-    curated.sort();
+    const selected = shuffled.slice(0, maxSlots);
+    selected.sort();
     console.log("[scheduling] bookingMode:", bookingMode);
     console.log("[scheduling] daysAhead:", daysAhead);
     console.log("[scheduling] slots disponíveis:", slots.length, slots);
     console.log("[scheduling] maxSlots:", maxSlots);
-    console.log("[scheduling] curated:", curated);
-    return curated;
+    console.log("[scheduling] selected:", selected);
+    return selected;
 }
