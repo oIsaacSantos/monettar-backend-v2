@@ -5,6 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.updateAppointment = updateAppointment;
 exports.getAllAppointments = getAllAppointments;
+exports.getAppointmentsByMonth = getAppointmentsByMonth;
 exports.getAppointmentsByDate = getAppointmentsByDate;
 const supabase_js_1 = require("@supabase/supabase-js");
 const dotenv_1 = __importDefault(require("dotenv"));
@@ -37,6 +38,25 @@ async function getAllAppointments(businessId) {
         .eq("business_id", businessId)
         .order("appointment_date", { ascending: false })
         .order("start_time", { ascending: false });
+    if (error)
+        throw new Error(error.message);
+    return (data ?? []).map((a) => ({
+        ...a,
+        clients: Array.isArray(a.clients) ? (a.clients[0] ?? null) : a.clients,
+        services: Array.isArray(a.services) ? (a.services[0] ?? null) : a.services,
+    }));
+}
+async function getAppointmentsByMonth(businessId, year, month) {
+    const start = `${year}-${String(month).padStart(2, "0")}-01`;
+    const end = `${year}-${String(month).padStart(2, "0")}-31`;
+    const { data, error } = await supabase
+        .from("appointments")
+        .select(`id, appointment_date, start_time, end_time, charged_amount, discount, payment_status, clients(id, name), services(id, name)`)
+        .eq("business_id", businessId)
+        .gte("appointment_date", start)
+        .lte("appointment_date", end)
+        .order("appointment_date", { ascending: true })
+        .order("start_time", { ascending: true });
     if (error)
         throw new Error(error.message);
     return (data ?? []).map((a) => ({

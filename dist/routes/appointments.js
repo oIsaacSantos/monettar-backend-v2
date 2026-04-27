@@ -46,6 +46,19 @@ exports.appointmentsRouter.get("/available-slots", async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
+exports.appointmentsRouter.get("/by-month", async (req, res) => {
+    const { businessId, year, month } = req.query;
+    if (!businessId || !year || !month) {
+        res.status(400).json({ error: "businessId, year e month obrigatórios" });
+        return;
+    }
+    try {
+        res.json(await (0, appointmentsService_1.getAppointmentsByMonth)(businessId, Number(year), Number(month)));
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
 exports.appointmentsRouter.get("/by-date", async (req, res) => {
     const { businessId, date } = req.query;
     if (!businessId || !date) {

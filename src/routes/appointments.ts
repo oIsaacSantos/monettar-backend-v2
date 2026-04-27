@@ -1,5 +1,5 @@
 import { Router, Request, Response } from "express";
-import { getAllAppointments, getAppointmentsByDate, updateAppointment } from "../services/appointmentsService";
+import { getAllAppointments, getAppointmentsByDate, getAppointmentsByMonth, updateAppointment } from "../services/appointmentsService";
 import { getAvailableSlots } from "../services/schedulingService";
 
 export const appointmentsRouter = Router();
@@ -39,6 +39,19 @@ appointmentsRouter.get("/available-slots", async (req: Request, res: Response) =
       period as any
     );
     res.json({ slots });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+appointmentsRouter.get("/by-month", async (req: Request, res: Response) => {
+  const { businessId, year, month } = req.query;
+  if (!businessId || !year || !month) {
+    res.status(400).json({ error: "businessId, year e month obrigatórios" });
+    return;
+  }
+  try {
+    res.json(await getAppointmentsByMonth(businessId as string, Number(year), Number(month)));
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

@@ -54,6 +54,25 @@ export async function getAllAppointments(businessId: string) {
   }));
 }
 
+export async function getAppointmentsByMonth(businessId: string, year: number, month: number) {
+  const start = `${year}-${String(month).padStart(2, "0")}-01`;
+  const end = `${year}-${String(month).padStart(2, "0")}-31`;
+  const { data, error } = await supabase
+    .from("appointments")
+    .select(`id, appointment_date, start_time, end_time, charged_amount, discount, payment_status, clients(id, name), services(id, name)`)
+    .eq("business_id", businessId)
+    .gte("appointment_date", start)
+    .lte("appointment_date", end)
+    .order("appointment_date", { ascending: true })
+    .order("start_time", { ascending: true });
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((a: any) => ({
+    ...a,
+    clients: Array.isArray(a.clients) ? (a.clients[0] ?? null) : a.clients,
+    services: Array.isArray(a.services) ? (a.services[0] ?? null) : a.services,
+  }));
+}
+
 export async function getAppointmentsByDate(businessId: string, date: string) {
   const { data, error } = await supabase
     .from("appointments")

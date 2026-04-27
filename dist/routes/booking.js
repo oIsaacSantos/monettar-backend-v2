@@ -48,7 +48,7 @@ exports.bookingRouter.get("/:slug/business", async (req, res) => {
     const { slug } = req.params;
     const { data, error } = await supabase
         .from("businesses")
-        .select("id, name, work_start_time, work_end_time, signal_type, signal_value")
+        .select("id, name, work_start_time, work_end_time, signal_type, signal_value, signal_base_value, signal_per_30min")
         .eq("slug", slug)
         .single();
     if (error || !data) {
@@ -87,7 +87,7 @@ exports.bookingRouter.get("/:slug/services", async (req, res) => {
     }
     const { data } = await supabase
         .from("services")
-        .select("id, name, current_price, duration_minutes")
+        .select("id, name, current_price, duration_minutes, description")
         .eq("business_id", business.id)
         .eq("active", true)
         .order("name");

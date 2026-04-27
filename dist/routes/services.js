@@ -4,6 +4,19 @@ exports.servicesRouter = void 0;
 const express_1 = require("express");
 const servicesService_1 = require("../services/servicesService");
 exports.servicesRouter = (0, express_1.Router)();
+exports.servicesRouter.get("/", async (req, res) => {
+    const { businessId } = req.query;
+    if (!businessId) {
+        res.status(400).json({ error: "businessId obrigatório" });
+        return;
+    }
+    try {
+        res.json(await (0, servicesService_1.getServices)(businessId));
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
 exports.servicesRouter.post("/", async (req, res) => {
     const { businessId } = req.query;
     if (!businessId) {
