@@ -17,7 +17,7 @@ function minutesToTime(minutes) {
     const m = minutes % 60;
     return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
-async function getAvailableSlots(businessId, date, durationMinutes, period, bookingMode = false) {
+async function getAvailableSlots(businessId, date, durationMinutes, period, bookingMode = false, sessionSeed) {
     const { data: business } = await supabase
         .from("businesses")
         .select("work_start_time, work_end_time, work_days_of_week, work_hours_by_day")
@@ -87,7 +87,15 @@ async function getAvailableSlots(businessId, date, durationMinutes, period, book
         maxSlots = 3;
     else
         maxSlots = 4;
-    const shuffled = [...slots].sort(() => Math.random() - 0.5);
+    const seededRandom = (seed) => {
+        let s = seed;
+        return () => {
+            s = (s * 1664525 + 1013904223) & 0xffffffff;
+            return (s >>> 0) / 0xffffffff;
+        };
+    };
+    const rng = sessionSeed !== undefined ? seededRandom(sessionSeed) : Math.random;
+    const shuffled = [...slots].sort(() => rng() - 0.5);
     const selected = shuffled.slice(0, maxSlots);
     selected.sort();
     console.log("[scheduling] bookingMode:", bookingMode);

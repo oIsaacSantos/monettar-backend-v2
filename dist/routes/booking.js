@@ -96,7 +96,7 @@ exports.bookingRouter.get("/:slug/services", async (req, res) => {
 // Horários disponíveis (com curadoria de booking)
 exports.bookingRouter.get("/:slug/available-slots", async (req, res) => {
     const { slug } = req.params;
-    const { date, duration, period } = req.query;
+    const { date, duration, period, seed } = req.query;
     console.log("[booking] available-slots chamado — slug:", req.params.slug, "date:", date, "duration:", duration, "period:", period);
     const { data: business } = await supabase
         .from("businesses").select("id").eq("slug", slug).single();
@@ -105,7 +105,7 @@ exports.bookingRouter.get("/:slug/available-slots", async (req, res) => {
         return;
     }
     const { getAvailableSlots } = await Promise.resolve().then(() => __importStar(require("../services/schedulingService")));
-    const slots = await getAvailableSlots(business.id, date, Number(duration), period, true);
+    const slots = await getAvailableSlots(business.id, date, Number(duration), period, true, seed ? Number(seed) : undefined);
     res.json({ slots });
 });
 // Criar agendamento (múltiplos serviços)

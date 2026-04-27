@@ -23,7 +23,8 @@ export async function getAvailableSlots(
   date: string,
   durationMinutes: number,
   period?: "morning" | "afternoon" | "evening",
-  bookingMode: boolean = false
+  bookingMode: boolean = false,
+  sessionSeed?: number
 ) {
   const { data: business } = await supabase
     .from("businesses")
@@ -106,24 +107,24 @@ export async function getAvailableSlots(
   else if (daysAhead <= 20) maxSlots = 3;
   else maxSlots = 4;
 
-  const shuffled = [...slots].sort(() => Math.random() - 0.5);
-  const morning = shuffled.filter((t) => parseInt(t) < 12);
-  const afternoon = shuffled.filter((t) => parseInt(t) >= 12);
-  const curated: string[] = [];
-  const halfMax = Math.ceil(maxSlots / 2);
-  curated.push(...morning.slice(0, halfMax));
-  curated.push(...afternoon.slice(0, maxSlots - curated.length));
-  if (curated.length < maxSlots) {
-    const remaining = shuffled.filter((t) => !curated.includes(t));
-    curated.push(...remaining.slice(0, maxSlots - curated.length));
-  }
-  curated.sort();
+  const seededRandom = (seed: number) => {
+    let s = seed;
+    return () => {
+      s = (s * 1664525 + 1013904223) & 0xffffffff;
+      return (s >>> 0) / 0xffffffff;
+    };
+  };
+
+  const rng = sessionSeed !== undefined ? seededRandom(sessionSeed) : Math.random;
+  const shuffled = [...slots].sort(() => rng() - 0.5);
+  const selected = shuffled.slice(0, maxSlots);
+  selected.sort();
 
   console.log("[scheduling] bookingMode:", bookingMode);
   console.log("[scheduling] daysAhead:", daysAhead);
   console.log("[scheduling] slots disponíveis:", slots.length, slots);
   console.log("[scheduling] maxSlots:", maxSlots);
-  console.log("[scheduling] curated:", curated);
+  console.log("[scheduling] selected:", selected);
 
-  return curated;
+  return selected;
 }
