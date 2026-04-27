@@ -20,11 +20,24 @@ function minutesToTime(minutes) {
 async function getAvailableSlots(businessId, date, durationMinutes, period, bookingMode = false) {
     const { data: business } = await supabase
         .from("businesses")
-        .select("work_start_time, work_end_time")
+        .select("work_start_time, work_end_time, work_days_of_week, work_hours_by_day")
         .eq("id", businessId)
         .single();
-    const workStart = timeToMinutes(business?.work_start_time ?? "08:00");
-    const workEnd = timeToMinutes(business?.work_end_time ?? "19:00");
+    const workDays = business?.work_days_of_week ?? [1, 2, 3, 4, 5, 6];
+    const targetDayOfWeek = new Date(date + "T12:00:00Z").getUTCDay();
+    console.log("[scheduling] business.work_days_of_week:", business?.work_days_of_week, typeof business?.work_days_of_week);
+    console.log("[scheduling] targetDayOfWeek:", targetDayOfWeek);
+    console.log("[scheduling] workDays:", workDays);
+    console.log("[scheduling] includes check:", workDays.includes(targetDayOfWeek));
+    if (!workDays.includes(targetDayOfWeek)) {
+        return [];
+    }
+    const workHoursByDay = business?.work_hours_by_day;
+    const dayKey = String(targetDayOfWeek);
+    const dayStart = workHoursByDay?.[dayKey]?.start ?? business?.work_start_time ?? "08:00";
+    const dayEnd = workHoursByDay?.[dayKey]?.end ?? business?.work_end_time ?? "19:00";
+    const workStart = timeToMinutes(dayStart);
+    const workEnd = timeToMinutes(dayEnd);
     const lunchStart = timeToMinutes("12:00");
     const lunchEnd = timeToMinutes("13:00");
     const { data: appointments } = await supabase
@@ -74,16 +87,18 @@ async function getAvailableSlots(businessId, date, durationMinutes, period, book
         maxSlots = 3;
     else
         maxSlots = 4;
+    const shuffled = [...slots].sort(() => Math.random() - 0.5);
+    const morning = shuffled.filter((t) => parseInt(t) < 12);
+    const afternoon = shuffled.filter((t) => parseInt(t) >= 12);
     const curated = [];
-    if (slots.length <= maxSlots) {
-        curated.push(...slots);
+    const halfMax = Math.ceil(maxSlots / 2);
+    curated.push(...morning.slice(0, halfMax));
+    curated.push(...afternoon.slice(0, maxSlots - curated.length));
+    if (curated.length < maxSlots) {
+        const remaining = shuffled.filter((t) => !curated.includes(t));
+        curated.push(...remaining.slice(0, maxSlots - curated.length));
     }
-    else {
-        const step = Math.floor(slots.length / maxSlots);
-        for (let i = 0; i < maxSlots; i++) {
-            curated.push(slots[Math.min(i * step, slots.length - 1)]);
-        }
-    }
+    curated.sort();
     console.log("[scheduling] bookingMode:", bookingMode);
     console.log("[scheduling] daysAhead:", daysAhead);
     console.log("[scheduling] slots disponíveis:", slots.length, slots);
