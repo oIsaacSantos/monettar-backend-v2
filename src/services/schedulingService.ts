@@ -89,14 +89,10 @@ export async function getAvailableSlots(
     current += 30;
   }
 
-  if (!bookingMode) {
-    console.log("[scheduling] bookingMode:", bookingMode);
-    console.log("[scheduling] slots disponíveis:", slots.length, slots);
-    return slots;
-  }
-
-  // Curadoria por faixa de antecedência
   const today = new Date();
+
+  if (!bookingMode) return slots;
+
   const todayUTC = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
   const [year, month, day] = date.split("-").map(Number);
   const targetUTC = Date.UTC(year, month - 1, day);
@@ -107,24 +103,40 @@ export async function getAvailableSlots(
   else if (daysAhead <= 20) maxSlots = 3;
   else maxSlots = 4;
 
-  const seededRandom = (seed: number) => {
-    let s = seed;
-    return () => {
-      s = (s * 1664525 + 1013904223) & 0xffffffff;
-      return (s >>> 0) / 0xffffffff;
-    };
+  if (slots.length <= maxSlots) return slots;
+
+  const dateSeed = year * 10000 + month * 100 + day;
+  const combinedSeed = ((sessionSeed ?? 0) + dateSeed) % 999983;
+
+  let s = combinedSeed === 0 ? 12345 : combinedSeed;
+  const rng = () => {
+    s = Math.imul(1664525, s) + 1013904223;
+    s = s >>> 0;
+    return s / 4294967296;
   };
 
-  const rng = sessionSeed !== undefined ? seededRandom(sessionSeed) : Math.random;
-  const shuffled = [...slots].sort(() => rng() - 0.5);
-  const selected = shuffled.slice(0, maxSlots);
-  selected.sort();
+  const arr = [...slots];
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
 
-  console.log("[scheduling] bookingMode:", bookingMode);
-  console.log("[scheduling] daysAhead:", daysAhead);
-  console.log("[scheduling] slots disponíveis:", slots.length, slots);
-  console.log("[scheduling] maxSlots:", maxSlots);
-  console.log("[scheduling] selected:", selected);
+  const morning = arr.filter((t) => parseInt(t.split(":")[0]) < 12);
+  const afternoon = arr.filter((t) => parseInt(t.split(":")[0]) >= 12);
 
-  return selected;
+  const result: string[] = [];
+
+  if (morning.length > 0 && afternoon.length > 0) {
+    result.push(morning[0]);
+    result.push(afternoon[0]);
+    for (const slot of arr) {
+      if (result.length >= maxSlots) break;
+      if (!result.includes(slot)) result.push(slot);
+    }
+  } else {
+    result.push(...arr.slice(0, maxSlots));
+  }
+
+  result.sort();
+  return result;
 }
