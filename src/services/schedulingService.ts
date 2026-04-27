@@ -27,12 +27,23 @@ export async function getAvailableSlots(
 ) {
   const { data: business } = await supabase
     .from("businesses")
-    .select("work_start_time, work_end_time")
+    .select("work_start_time, work_end_time, work_days_of_week, work_hours_by_day")
     .eq("id", businessId)
     .single();
 
-  const workStart = timeToMinutes(business?.work_start_time ?? "08:00");
-  const workEnd = timeToMinutes(business?.work_end_time ?? "19:00");
+  const workDays: number[] = (business?.work_days_of_week as number[] | null) ?? [1, 2, 3, 4, 5, 6];
+  const targetDayOfWeek = new Date(date + "T12:00:00Z").getUTCDay();
+  if (!workDays.includes(targetDayOfWeek)) {
+    return [];
+  }
+
+  const workHoursByDay = business?.work_hours_by_day as Record<string, { start: string; end: string }> | null;
+  const dayKey = String(targetDayOfWeek);
+  const dayStart = workHoursByDay?.[dayKey]?.start ?? business?.work_start_time ?? "08:00";
+  const dayEnd = workHoursByDay?.[dayKey]?.end ?? business?.work_end_time ?? "19:00";
+
+  const workStart = timeToMinutes(dayStart);
+  const workEnd = timeToMinutes(dayEnd);
   const lunchStart = timeToMinutes("12:00");
   const lunchEnd = timeToMinutes("13:00");
 
@@ -91,16 +102,18 @@ export async function getAvailableSlots(
   else if (daysAhead <= 20) maxSlots = 3;
   else maxSlots = 4;
 
+  const shuffled = [...slots].sort(() => Math.random() - 0.5);
+  const morning = shuffled.filter((t) => parseInt(t) < 12);
+  const afternoon = shuffled.filter((t) => parseInt(t) >= 12);
   const curated: string[] = [];
-
-  if (slots.length <= maxSlots) {
-    curated.push(...slots);
-  } else {
-    const step = Math.floor(slots.length / maxSlots);
-    for (let i = 0; i < maxSlots; i++) {
-      curated.push(slots[Math.min(i * step, slots.length - 1)]);
-    }
+  const halfMax = Math.ceil(maxSlots / 2);
+  curated.push(...morning.slice(0, halfMax));
+  curated.push(...afternoon.slice(0, maxSlots - curated.length));
+  if (curated.length < maxSlots) {
+    const remaining = shuffled.filter((t) => !curated.includes(t));
+    curated.push(...remaining.slice(0, maxSlots - curated.length));
   }
+  curated.sort();
 
   console.log("[scheduling] bookingMode:", bookingMode);
   console.log("[scheduling] daysAhead:", daysAhead);
