@@ -89,6 +89,22 @@ bookingRouter.get("/:slug/my-appointments", async (req: Request, res: Response) 
   res.json((data ?? []).map((a: any) => ({ ...a, services: Array.isArray(a.services) ? a.services[0] : a.services })));
 });
 
+bookingRouter.get("/:slug/client-packages", async (req: Request, res: Response) => {
+  const { phone } = req.query;
+  const { data: business } = await supabase.from("businesses").select("id").eq("slug", req.params.slug).single();
+  if (!business) { res.status(404).json({ error: "Não encontrado" }); return; }
+  const normalized = String(phone).replace(/\D/g, "");
+  const { data: client } = await supabase.from("clients").select("id").eq("business_id", business.id).ilike("phone", `%${normalized.slice(-8)}%`).single();
+  if (!client) { res.json([]); return; }
+  const { data } = await supabase
+    .from("client_packages")
+    .select("*, service_packages(name, sessions, service_id, services(name))")
+    .eq("business_id", business.id)
+    .eq("client_id", client.id)
+    .eq("status", "active");
+  res.json(data ?? []);
+});
+
 // Cancelar agendamento
 bookingRouter.patch("/:slug/appointment/:id/cancel", async (req: Request, res: Response) => {
   const { id } = req.params;
