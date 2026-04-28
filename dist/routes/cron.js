@@ -11,9 +11,11 @@ const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
 const supabase = (0, supabase_js_1.createClient)(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 exports.cronRouter = (0, express_1.Router)();
+function isCronAuthorized(req) {
+    return req.headers["x-cron-secret"] === process.env.CRON_SECRET;
+}
 exports.cronRouter.post("/day-start", async (req, res) => {
-    const secret = req.headers["x-cron-secret"];
-    if (secret !== process.env.CRON_SECRET) {
+    if (!isCronAuthorized(req)) {
         res.status(401).json({ error: "Não autorizado" });
         return;
     }
@@ -24,4 +26,46 @@ exports.cronRouter.post("/day-start", async (req, res) => {
         await (0, notificationService_1.sendDayStartNotification)(b.id);
     }
     res.json({ ok: true });
+});
+exports.cronRouter.post("/push-test", async (req, res) => {
+    if (!isCronAuthorized(req)) {
+        res.status(401).json({ success: false, error: "Nao autorizado" });
+        return;
+    }
+    const { businessId } = req.body;
+    if (!businessId) {
+        res.status(400).json({ success: false, error: "businessId obrigatorio" });
+        return;
+    }
+    try {
+        const result = await (0, notificationService_1.sendPushToBusiness)(businessId, {
+            title: "Teste de notificacao",
+            body: "Se voce recebeu isso, o push esta funcionando.",
+            url: "/agenda",
+        });
+        if (result.sent === 0) {
+            res.status(result.error === "No subscription for business" ? 404 : 500).json({
+                success: false,
+                error: result.error,
+                businessId,
+                sent: result.sent,
+                statusCode: result.statusCode,
+            });
+            return;
+        }
+        res.json({
+            success: true,
+            message: "Push test sent",
+            businessId,
+            sent: result.sent,
+        });
+    }
+    catch (err) {
+        res.status(500).json({
+            success: false,
+            error: err?.message ?? "Push test failed",
+            businessId,
+            sent: 0,
+        });
+    }
 });

@@ -15,28 +15,52 @@ function configureWebPush() {
     if (vapidConfigured)
         return;
     const email = process.env.VAPID_EMAIL;
-    const publicKey = process.env.VAPID_PUBLIC_KEY;
+    const publicKey = process.env.VAPID_PUBLIC_KEY ?? process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
     const privateKey = process.env.VAPID_PRIVATE_KEY;
     if (!email || !publicKey || !privateKey) {
-        throw new Error("VAPID env vars not configured");
+        const message = `VAPID env vars not configured. Present: email=${!!email} publicKey=${!!publicKey} privateKey=${!!privateKey}`;
+        console.error(`[push] ${message}`);
+        throw new Error(message);
     }
     web_push_1.default.setVapidDetails(email, publicKey, privateKey);
     vapidConfigured = true;
 }
 async function sendPushToBusiness(businessId, payload) {
-    const { data } = await supabase
+    const { data, error: dbError } = await supabase
         .from("push_subscriptions")
         .select("subscription")
         .eq("business_id", businessId)
         .single();
-    if (!data)
-        return;
+    if (!data) {
+        console.warn(`[push] No subscription for business ${businessId}:`, dbError?.message);
+        return { sent: 0, error: "No subscription for business" };
+    }
+    let sub;
+    try {
+        sub = typeof data.subscription === "string" ? JSON.parse(data.subscription) : data.subscription;
+    }
+    catch {
+        console.error(`[push] Invalid subscription JSON for business ${businessId}`);
+        return { sent: 0, error: "Invalid subscription JSON" };
+    }
     try {
         configureWebPush();
-        await web_push_1.default.sendNotification(JSON.parse(data.subscription), JSON.stringify(payload));
+        console.log(`[push] Sending "${payload.title}" to business ${businessId}`);
+        await web_push_1.default.sendNotification(sub, JSON.stringify(payload));
+        console.log(`[push] OK - business ${businessId}`);
+        return { sent: 1 };
     }
     catch (err) {
-        console.error("Push error:", err);
+        console.error(`[push] Error for business ${businessId}:`, err?.statusCode, err?.message ?? err);
+        if (err?.statusCode === 410) {
+            await supabase.from("push_subscriptions").delete().eq("business_id", businessId);
+            console.log(`[push] Removed stale subscription for business ${businessId}`);
+        }
+        return {
+            sent: 0,
+            error: err?.message ?? "Push send error",
+            statusCode: err?.statusCode,
+        };
     }
 }
 async function sendDayStartNotification(businessId) {
