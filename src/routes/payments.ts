@@ -9,23 +9,49 @@ const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SE
 export const paymentsRouter = Router();
 
 async function notifyPaidAppointment(appointmentId: string) {
-  const { data: appt } = await supabase
-    .from("appointments")
-    .select("business_id, clients(name), services(name), start_time, appointment_date")
-    .eq("id", appointmentId)
-    .single();
+  console.log("[push-confirmed] appointment id:", appointmentId);
 
-  if (!appt) return;
+  try {
+    const { data: appt, error } = await supabase
+      .from("appointments")
+      .select("business_id, clients(name), services(name), start_time, appointment_date")
+      .eq("id", appointmentId)
+      .single();
 
-  const clientName = (appt.clients as any)?.name ?? "Cliente";
-  const serviceName = (appt.services as any)?.name ?? "Serviço";
-  const time = appt.start_time?.slice(0, 5) ?? "";
+    if (error) {
+      console.error("[push-confirmed] error:", error.message);
+      return;
+    }
 
-  await sendPushToBusiness(appt.business_id, {
-    title: "Novo agendamento confirmado",
-    body: `${clientName} agendou ${serviceName} às ${time}`,
-    url: "/agenda",
-  });
+    if (!appt) {
+      console.error("[push-confirmed] error: appointment not found");
+      return;
+    }
+
+    const client = Array.isArray(appt.clients) ? appt.clients[0] : (appt.clients as any);
+    const service = Array.isArray(appt.services) ? appt.services[0] : (appt.services as any);
+    const clientName = client?.name ?? "Cliente";
+    const serviceName = service?.name ?? "Serviço";
+    const time = appt.start_time?.slice(0, 5) ?? "";
+    const [y, mo, d] = (appt.appointment_date ?? "").split("-");
+    const dateFormatted = y ? `${d}/${mo}/${y}` : "";
+
+    console.log("[push-confirmed] business id:", appt.business_id);
+    console.log("[push-confirmed] sending push");
+    const result = await sendPushToBusiness(appt.business_id, {
+      title: "Novo agendamento confirmado",
+      body: `${clientName} agendou ${serviceName}${dateFormatted ? ` para ${dateFormatted}` : ""} às ${time}`,
+      url: "/agenda",
+    });
+
+    if (result.sent === 1) {
+      console.log("[push-confirmed] sent ok");
+    } else {
+      console.error("[push-confirmed] error:", result.error ?? "push not sent");
+    }
+  } catch (err: any) {
+    console.error("[push-confirmed] error:", err?.message ?? err);
+  }
 }
 
 // Criar pagamento PIX para sinal
@@ -85,6 +111,7 @@ paymentsRouter.get("/status/:paymentId", async (req: Request, res: Response) => 
     const status = await getPaymentStatus(accessToken, paymentId);
 
     if (status === "approved") {
+      console.log("[push-confirmed] payment paid detected");
       const { data: appt } = await supabase
         .from("appointments")
         .select("id, payment_status")
@@ -132,6 +159,7 @@ paymentsRouter.post("/webhook", async (req: Request, res: Response) => {
       const status = await getPaymentStatus(accessToken, paymentId);
 
       if (status === "approved" && appt && appt.payment_status !== "paid") {
+        console.log("[push-confirmed] payment paid detected");
         await supabase
           .from("appointments")
           .update({ payment_status: "paid", paid_date: new Date().toISOString().slice(0, 10) })
