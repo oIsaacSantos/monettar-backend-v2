@@ -4,6 +4,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.updateAppointment = updateAppointment;
+exports.deleteAppointment = deleteAppointment;
 exports.getAllAppointments = getAllAppointments;
 exports.getAppointmentsByMonth = getAppointmentsByMonth;
 exports.getAppointmentsByDate = getAppointmentsByDate;
@@ -31,10 +32,31 @@ async function updateAppointment(id, businessId, payload) {
         throw new Error(error.message);
     return data;
 }
+async function deleteAppointment(id, businessId) {
+    const { error } = await supabase
+        .from("appointments")
+        .delete()
+        .eq("id", id)
+        .eq("business_id", businessId);
+    if (error)
+        throw new Error(error.message);
+    return { success: true };
+}
 async function getAllAppointments(businessId) {
     const { data, error } = await supabase
         .from("appointments")
-        .select(`id, appointment_date, start_time, end_time, charged_amount, discount, payment_status, clients(name), services(name)`)
+        .select(`
+      id,
+      appointment_date,
+      start_time,
+      end_time,
+      charged_amount,
+      discount,
+      payment_status,
+      notes,
+      clients(id, name, phone),
+      services(id, name, duration_minutes)
+    `)
         .eq("business_id", businessId)
         .order("appointment_date", { ascending: false })
         .order("start_time", { ascending: false });

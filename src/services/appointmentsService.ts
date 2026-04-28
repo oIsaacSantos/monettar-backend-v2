@@ -39,10 +39,32 @@ export async function updateAppointment(
   return data;
 }
 
+export async function deleteAppointment(id: string, businessId: string) {
+  const { error } = await supabase
+    .from("appointments")
+    .delete()
+    .eq("id", id)
+    .eq("business_id", businessId);
+
+  if (error) throw new Error(error.message);
+  return { success: true };
+}
+
 export async function getAllAppointments(businessId: string) {
   const { data, error } = await supabase
     .from("appointments")
-    .select(`id, appointment_date, start_time, end_time, charged_amount, discount, payment_status, clients(name), services(name)`)
+    .select(`
+      id,
+      appointment_date,
+      start_time,
+      end_time,
+      charged_amount,
+      discount,
+      payment_status,
+      notes,
+      clients(id, name, phone),
+      services(id, name, duration_minutes)
+    `)
     .eq("business_id", businessId)
     .order("appointment_date", { ascending: false })
     .order("start_time", { ascending: false });

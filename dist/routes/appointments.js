@@ -19,6 +19,20 @@ exports.appointmentsRouter.put("/:id", async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
+exports.appointmentsRouter.delete("/:id", async (req, res) => {
+    const { businessId } = req.query;
+    const { id } = req.params;
+    if (!businessId) {
+        res.status(400).json({ error: "businessId obrigatório" });
+        return;
+    }
+    try {
+        res.json(await (0, appointmentsService_1.deleteAppointment)(id, businessId));
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
 exports.appointmentsRouter.get("/all", async (req, res) => {
     const { businessId } = req.query;
     if (!businessId) {

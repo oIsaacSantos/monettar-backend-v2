@@ -1,5 +1,5 @@
 import { Router, Request, Response } from "express";
-import { getAllAppointments, getAppointmentsByDate, getAppointmentsByMonth, updateAppointment } from "../services/appointmentsService";
+import { deleteAppointment, getAllAppointments, getAppointmentsByDate, getAppointmentsByMonth, updateAppointment } from "../services/appointmentsService";
 import { getAvailableSlots } from "../services/schedulingService";
 
 export const appointmentsRouter = Router();
@@ -10,6 +10,17 @@ appointmentsRouter.put("/:id", async (req: Request, res: Response) => {
   if (!businessId) { res.status(400).json({ error: "businessId obrigatório" }); return; }
   try {
     res.json(await updateAppointment(id, businessId as string, req.body));
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+appointmentsRouter.delete("/:id", async (req: Request, res: Response) => {
+  const { businessId } = req.query;
+  const { id } = req.params;
+  if (!businessId) { res.status(400).json({ error: "businessId obrigatório" }); return; }
+  try {
+    res.json(await deleteAppointment(id, businessId as string));
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
