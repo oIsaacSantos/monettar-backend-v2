@@ -1,11 +1,32 @@
 import { Router, Request, Response } from "express";
 import { createClient } from "@supabase/supabase-js";
 import { createPixPayment, getPaymentStatus } from "../services/paymentService";
+import { sendPushToBusiness } from "../services/notificationService";
 import dotenv from "dotenv";
 dotenv.config();
 
 const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 export const paymentsRouter = Router();
+
+async function notifyPaidAppointment(appointmentId: string) {
+  const { data: appt } = await supabase
+    .from("appointments")
+    .select("business_id, clients(name), services(name), start_time, appointment_date")
+    .eq("id", appointmentId)
+    .single();
+
+  if (!appt) return;
+
+  const clientName = (appt.clients as any)?.name ?? "Cliente";
+  const serviceName = (appt.services as any)?.name ?? "Serviço";
+  const time = appt.start_time?.slice(0, 5) ?? "";
+
+  await sendPushToBusiness(appt.business_id, {
+    title: "Novo agendamento confirmado",
+    body: `${clientName} agendou ${serviceName} às ${time}`,
+    url: "/agenda",
+  });
+}
 
 // Criar pagamento PIX para sinal
 paymentsRouter.post("/pix", async (req: Request, res: Response) => {
@@ -23,7 +44,7 @@ paymentsRouter.post("/pix", async (req: Request, res: Response) => {
       .eq("id", businessId)
       .single();
 
-    const accessToken = business?.mp_access_token ?? process.env.MP_ACCESS_TOKEN!;
+    const accessToken = business?.mp_access_token?.trim() || process.env.MP_ACCESS_TOKEN!;
 
     const pixData = await createPixPayment({
       accessToken,
@@ -60,21 +81,22 @@ paymentsRouter.get("/status/:paymentId", async (req: Request, res: Response) => 
       .eq("id", businessId as string)
       .single();
 
-    const accessToken = business?.mp_access_token ?? process.env.MP_ACCESS_TOKEN!;
+    const accessToken = business?.mp_access_token?.trim() || process.env.MP_ACCESS_TOKEN!;
     const status = await getPaymentStatus(accessToken, paymentId);
 
     if (status === "approved") {
       const { data: appt } = await supabase
         .from("appointments")
-        .select("id")
+        .select("id, payment_status")
         .eq("mp_payment_id", paymentId)
         .single();
 
-      if (appt) {
+      if (appt && appt.payment_status !== "paid") {
         await supabase
           .from("appointments")
           .update({ payment_status: "paid", paid_date: new Date().toISOString().slice(0, 10) })
           .eq("id", appt.id);
+        await notifyPaidAppointment(appt.id);
       }
     }
 
@@ -90,14 +112,31 @@ paymentsRouter.post("/webhook", async (req: Request, res: Response) => {
 
   if (type === "payment" && data?.id) {
     try {
-      const accessToken = process.env.MP_ACCESS_TOKEN!;
-      const status = await getPaymentStatus(accessToken, String(data.id));
+      const paymentId = String(data.id);
+      const { data: appt } = await supabase
+        .from("appointments")
+        .select("id, business_id, payment_status")
+        .eq("mp_payment_id", paymentId)
+        .single();
 
-      if (status === "approved") {
+      let accessToken = process.env.MP_ACCESS_TOKEN!;
+      if (appt?.business_id) {
+        const { data: business } = await supabase
+          .from("businesses")
+          .select("mp_access_token")
+          .eq("id", appt.business_id)
+          .single();
+        accessToken = business?.mp_access_token?.trim() || accessToken;
+      }
+
+      const status = await getPaymentStatus(accessToken, paymentId);
+
+      if (status === "approved" && appt && appt.payment_status !== "paid") {
         await supabase
           .from("appointments")
           .update({ payment_status: "paid", paid_date: new Date().toISOString().slice(0, 10) })
-          .eq("mp_payment_id", String(data.id));
+          .eq("mp_payment_id", paymentId);
+        await notifyPaidAppointment(appt.id);
       }
     } catch (err) {
       console.error("Webhook error:", err);
