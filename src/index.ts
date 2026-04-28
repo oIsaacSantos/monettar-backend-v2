@@ -12,6 +12,7 @@ import { bookingRouter } from "./routes/booking";
 import { paymentsRouter } from "./routes/payments";
 import { authRouter } from "./routes/auth";
 import { bookingLeadsRouter } from "./routes/bookingLeads";
+import { packagesRouter } from "./routes/packages";
 
 dotenv.config({ path: path.resolve(__dirname, "../.env") });
 
@@ -35,6 +36,7 @@ app.use("/api/booking", bookingRouter);
 app.use("/api/booking-leads", bookingLeadsRouter);
 app.use("/api/payments", paymentsRouter);
 app.use("/api/auth", authRouter);
+app.use("/api/packages", packagesRouter);
 
 app.listen(PORT, () => {
   console.log(`Backend rodando na porta ${PORT}`);

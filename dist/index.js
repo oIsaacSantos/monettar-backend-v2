@@ -17,6 +17,7 @@ const booking_1 = require("./routes/booking");
 const payments_1 = require("./routes/payments");
 const auth_1 = require("./routes/auth");
 const bookingLeads_1 = require("./routes/bookingLeads");
+const packages_1 = require("./routes/packages");
 dotenv_1.default.config({ path: path_1.default.resolve(__dirname, "../.env") });
 const app = (0, express_1.default)();
 const PORT = process.env.PORT || 3001;
@@ -35,6 +36,7 @@ app.use("/api/booking", booking_1.bookingRouter);
 app.use("/api/booking-leads", bookingLeads_1.bookingLeadsRouter);
 app.use("/api/payments", payments_1.paymentsRouter);
 app.use("/api/auth", auth_1.authRouter);
+app.use("/api/packages", packages_1.packagesRouter);
 app.listen(PORT, () => {
     console.log(`Backend rodando na porta ${PORT}`);
 });
