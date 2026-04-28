@@ -48,7 +48,8 @@ async function getAllAppointments(businessId) {
 }
 async function getAppointmentsByMonth(businessId, year, month) {
     const start = `${year}-${String(month).padStart(2, "0")}-01`;
-    const end = `${year}-${String(month).padStart(2, "0")}-31`;
+    const lastDay = new Date(year, month, 0).getDate();
+    const end = `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
     const { data, error } = await supabase
         .from("appointments")
         .select(`id, appointment_date, start_time, end_time, charged_amount, discount, payment_status, clients(id, name), services(id, name)`)
