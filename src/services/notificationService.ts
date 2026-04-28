@@ -45,3 +45,27 @@ export async function sendPushToBusiness(
     console.error("Push error:", err);
   }
 }
+
+export async function sendDayStartNotification(businessId: string) {
+  const today = new Date().toISOString().slice(0, 10);
+  const { data: appointments } = await supabase
+    .from("appointments")
+    .select("start_time, clients(name)")
+    .eq("business_id", businessId)
+    .eq("appointment_date", today)
+    .neq("payment_status", "cancelled")
+    .order("start_time", { ascending: true });
+
+  const count = appointments?.length ?? 0;
+  const first = appointments?.[0];
+  const firstTime = first?.start_time?.slice(0, 5) ?? "";
+  const body = count > 0
+    ? `Hoje você tem ${count} atendimento${count > 1 ? "s" : ""} confirmado${count > 1 ? "s" : ""}. Primeiro às ${firstTime}`
+    : "Você não tem atendimentos confirmados hoje.";
+
+  await sendPushToBusiness(businessId, {
+    title: "Bom dia! ☀️",
+    body,
+    url: "/agenda",
+  });
+}
