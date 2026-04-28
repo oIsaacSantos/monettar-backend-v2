@@ -108,6 +108,50 @@ exports.bookingRouter.get("/:slug/available-slots", async (req, res) => {
     const slots = await getAvailableSlots(business.id, date, Number(duration), period, true, seed ? Number(seed) : undefined);
     res.json({ slots });
 });
+// Listar agendamentos do cliente
+exports.bookingRouter.get("/:slug/my-appointments", async (req, res) => {
+    const { phone } = req.query;
+    const { data: business } = await supabase.from("businesses").select("id").eq("slug", req.params.slug).single();
+    if (!business) {
+        res.status(404).json({ error: "Não encontrado" });
+        return;
+    }
+    const normalized = String(phone).replace(/\D/g, "");
+    const { data: client } = await supabase.from("clients").select("id").eq("business_id", business.id).ilike("phone", `%${normalized.slice(-8)}%`).single();
+    if (!client) {
+        res.json([]);
+        return;
+    }
+    const today = new Date().toISOString().slice(0, 10);
+    const { data } = await supabase
+        .from("appointments")
+        .select("id, appointment_date, start_time, end_time, payment_status, services(name)")
+        .eq("business_id", business.id)
+        .eq("client_id", client.id)
+        .gte("appointment_date", today)
+        .order("appointment_date", { ascending: true });
+    res.json((data ?? []).map((a) => ({ ...a, services: Array.isArray(a.services) ? a.services[0] : a.services })));
+});
+// Cancelar agendamento
+exports.bookingRouter.patch("/:slug/appointment/:id/cancel", async (req, res) => {
+    const { id } = req.params;
+    const { data: business } = await supabase.from("businesses").select("id").eq("slug", req.params.slug).single();
+    if (!business) {
+        res.status(404).json({ error: "Não encontrado" });
+        return;
+    }
+    const { data, error } = await supabase
+        .from("appointments")
+        .update({ payment_status: "cancelled" })
+        .eq("id", id)
+        .eq("business_id", business.id)
+        .select().single();
+    if (error) {
+        res.status(500).json({ error: error.message });
+        return;
+    }
+    res.json(data);
+});
 // Criar agendamento (múltiplos serviços)
 exports.bookingRouter.post("/:slug/appointment", async (req, res) => {
     const { slug } = req.params;
