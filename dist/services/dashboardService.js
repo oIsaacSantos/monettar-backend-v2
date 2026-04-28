@@ -8,10 +8,27 @@ const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
 const supabase_js_1 = require("@supabase/supabase-js");
 const supabase = (0, supabase_js_1.createClient)(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
+function toSafeNumber(value) {
+    const numericValue = Number(value ?? 0);
+    return Number.isFinite(numericValue) ? numericValue : 0;
+}
+function calculateMonthlyGoal(businessId, fixedCosts, proLabore, reservePercent, workingCapitalPercent) {
+    const baseGoal = fixedCosts + proLabore;
+    const denominator = 1 - reservePercent / 100 - workingCapitalPercent / 100;
+    if (denominator <= 0) {
+        console.warn("[dashboard] Meta mensal com percentuais invalidos", {
+            businessId,
+            reservePercent,
+            workingCapitalPercent,
+        });
+        return baseGoal;
+    }
+    return baseGoal / denominator;
+}
 async function getDashboardSummary(businessId) {
     const { data: business } = await supabase
         .from("businesses")
-        .select("monthly_goal, desired_pro_labore, reserve_percent, working_capital_percent")
+        .select("desired_pro_labore, reserve_percent, working_capital_percent")
         .eq("id", businessId)
         .single();
     const { data: appointments } = await supabase
@@ -56,15 +73,15 @@ async function getDashboardSummary(businessId) {
         entry.revenue += revenue;
         entry.profit += revenue - material;
     }
-    const totalFixed = (fixedCosts ?? []).reduce((s, c) => s + Number(c.amount), 0);
+    const totalFixed = (fixedCosts ?? []).reduce((s, c) => s + toSafeNumber(c.amount), 0);
     const totalProfit = totalRevenue - totalMaterial - totalFixed;
     const totalAppointments = appointments?.length ?? 0;
     const averageTicket = totalAppointments > 0 ? totalRevenue / totalAppointments : 0;
-    const monthlyGoal = Number(business?.monthly_goal ?? 0);
+    const proLabore = toSafeNumber(business?.desired_pro_labore);
+    const reservePercent = toSafeNumber(business?.reserve_percent);
+    const workingCapitalPercent = toSafeNumber(business?.working_capital_percent);
+    const monthlyGoal = calculateMonthlyGoal(businessId, totalFixed, proLabore, reservePercent, workingCapitalPercent);
     const goalProgress = monthlyGoal > 0 ? monthRevenue / monthlyGoal : null;
-    const proLabore = Number(business?.desired_pro_labore ?? 0);
-    const reservePercent = Number(business?.reserve_percent ?? 0);
-    const workingCapitalPercent = Number(business?.working_capital_percent ?? 0);
     const reserve = monthRevenue * reservePercent / 100;
     const workingCapital = monthRevenue * workingCapitalPercent / 100;
     const servicesBreakdown = Array.from(serviceMap.values())
