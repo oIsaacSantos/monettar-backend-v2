@@ -15,6 +15,7 @@ import { authRouter } from "./routes/auth";
 import { bookingLeadsRouter } from "./routes/bookingLeads";
 import { packagesRouter } from "./routes/packages";
 import { cronRouter } from "./routes/cron";
+import { scheduleOverridesRouter } from "./routes/scheduleOverrides";
 import { requireBusinessAccess } from "./middleware/auth";
 
 dotenv.config({ path: path.resolve(__dirname, "../.env") });
@@ -43,6 +44,7 @@ app.use("/api/clients", requireBusinessAccess, clientsRouter);
 app.use("/api/services", requireBusinessAccess, servicesRouter);
 app.use("/api/fixed-costs", requireBusinessAccess, fixedCostsRouter);
 app.use("/api/business", requireBusinessAccess, businessRouter);
+app.use("/api/schedule-overrides", requireBusinessAccess, scheduleOverridesRouter);
 app.use("/api/booking", publicBookingRateLimit, bookingRouter);
 app.use("/api/booking-leads", bookingLeadsRouter);
 app.use("/api/payments", paymentsRouter);

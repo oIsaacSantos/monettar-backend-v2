@@ -55,6 +55,14 @@ function getPeriodRange(period, workStart, workEnd, lunchBreak) {
     };
     return period ? periodRanges[period] : { start: workStart, end: workEnd };
 }
+function intersectBlocks(blocks, range) {
+    return blocks
+        .map((block) => ({
+        start: Math.max(block.start, range.start),
+        end: Math.min(block.end, range.end),
+    }))
+        .filter((block) => block.start < block.end);
+}
 function getLunchBreak(business) {
     if (!business?.lunch_break_active)
         return undefined;
@@ -100,12 +108,58 @@ function buildAvailabilityBlocks(range, lunchBreak) {
         { start: Math.max(lunchBreak.end, range.start), end: range.end },
     ].filter((block) => block.start < block.end);
 }
+function getTimeRangeOverride(override) {
+    if (!isValidTime(override.start_time) || !isValidTime(override.end_time))
+        return null;
+    const start = timeToMinutes(override.start_time);
+    const end = timeToMinutes(override.end_time);
+    if (end <= start)
+        return null;
+    return { start, end };
+}
+function applyOpenOverrides(blocks, overrides, workRange) {
+    const next = [...blocks];
+    for (const override of overrides) {
+        if (override.type === "open_full_day") {
+            next.push(workRange);
+            continue;
+        }
+        if (override.type === "open_time_range") {
+            const range = getTimeRangeOverride(override);
+            if (range)
+                next.push(range);
+        }
+    }
+    return next;
+}
+function hasFullDayBlock(overrides) {
+    return overrides.some((override) => override.type === "block_full_day");
+}
+function getBlockRanges(overrides) {
+    return overrides
+        .filter((override) => override.type === "block_time_range")
+        .map(getTimeRangeOverride)
+        .filter((range) => Boolean(range));
+}
+function hasBlockConflict(start, end, blockRanges) {
+    return blockRanges.some((range) => start < range.end && end > range.start);
+}
+function dedupeAndSortSlots(slots) {
+    return [...new Set(slots)].sort();
+}
 function hasOccupiedConflict(start, end, occupied, buffer) {
     return occupied.some((slot) => start < slot.end + buffer && end > slot.start - buffer);
 }
 function buildRealAvailabilitySlots(params) {
-    const range = getPeriodRange(params.period, params.workStart, params.workEnd, params.lunchBreak);
-    const blocks = buildAvailabilityBlocks(range, params.lunchBreak);
+    if (hasFullDayBlock(params.overrides))
+        return [];
+    const workRange = { start: params.workStart, end: params.workEnd };
+    const baseBlocks = params.isWorkDay ? [workRange] : [];
+    const openBlocks = applyOpenOverrides(baseBlocks, params.overrides, workRange);
+    const periodRange = getPeriodRange(params.period, params.workStart, params.workEnd, params.lunchBreak);
+    const periodBlocks = intersectBlocks(openBlocks, periodRange);
+    const blocks = periodBlocks.flatMap((block) => buildAvailabilityBlocks(block, params.lunchBreak));
+    const blockRanges = getBlockRanges(params.overrides);
     const slots = [];
     // Disponibilidade real: expediente, almoço configurado, duração, appointments e buffer.
     for (const block of blocks) {
@@ -113,13 +167,14 @@ function buildRealAvailabilitySlots(params) {
         while (current + params.durationMinutes <= block.end) {
             const slotEnd = current + params.durationMinutes;
             const isOccupied = hasOccupiedConflict(current, slotEnd, params.occupied, params.appointmentBufferMinutes);
-            if (!isOccupied) {
+            const isBlocked = hasBlockConflict(current, slotEnd, blockRanges);
+            if (!isOccupied && !isBlocked) {
                 slots.push(minutesToTime(current));
             }
             current += SLOT_INTERVAL_MINUTES;
         }
     }
-    return slots;
+    return dedupeAndSortSlots(slots);
 }
 function getDaysAhead(date) {
     const [todayYear, todayMonth, todayDay] = (0, date_1.todayBRT)().split("-").map(Number);
@@ -190,12 +245,14 @@ async function getAvailableSlots(businessId, date, durationMinutes, period, book
     console.log("[scheduling] targetDayOfWeek:", targetDayOfWeek);
     console.log("[scheduling] workDays:", workDays);
     console.log("[scheduling] includes check:", workDays.includes(targetDayOfWeek));
-    if (!workDays.includes(targetDayOfWeek)) {
-        return [];
-    }
     const { workStart, workEnd } = getWorkRange(business, targetDayOfWeek);
     const lunchBreak = getLunchBreak(business);
     const appointmentBufferMinutes = getAppointmentBufferMinutes(business);
+    const { data: overrides } = await supabase
+        .from("schedule_overrides")
+        .select("id, business_id, date, start_time, end_time, type")
+        .eq("business_id", businessId)
+        .eq("date", date);
     const { data: appointments } = await supabase
         .from("appointments")
         .select("start_time, end_time")
@@ -209,11 +266,13 @@ async function getAvailableSlots(businessId, date, durationMinutes, period, book
     const slots = buildRealAvailabilitySlots({
         workStart,
         workEnd,
+        isWorkDay: workDays.includes(targetDayOfWeek),
         durationMinutes,
         period,
         occupied,
         lunchBreak,
         appointmentBufferMinutes,
+        overrides: (overrides ?? []),
     });
     if (!bookingMode)
         return slots;
