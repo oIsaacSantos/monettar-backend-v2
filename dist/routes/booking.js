@@ -39,6 +39,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.bookingRouter = void 0;
 const express_1 = require("express");
 const supabase_js_1 = require("@supabase/supabase-js");
+const date_1 = require("../utils/date");
 const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
 const supabase = (0, supabase_js_1.createClient)(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
@@ -143,7 +144,7 @@ exports.bookingRouter.get("/:slug/my-appointments", async (req, res) => {
         res.json([]);
         return;
     }
-    const today = new Date().toISOString().slice(0, 10);
+    const today = (0, date_1.todayBRT)();
     const { data } = await supabase
         .from("appointments")
         .select("id, appointment_date, start_time, end_time, payment_status, services(name)")
@@ -276,6 +277,20 @@ exports.bookingRouter.post("/:slug/appointment", async (req, res) => {
         const [h, m] = startTime.split(":").map(Number);
         const endDate = new Date(2000, 0, 1, h, m + duration);
         const endTime = `${String(endDate.getHours()).padStart(2, "0")}:${String(endDate.getMinutes()).padStart(2, "0")}`;
+        const { data: conflictingAppointments, error: conflictError } = await supabase
+            .from("appointments")
+            .select("id")
+            .eq("business_id", business.id)
+            .eq("appointment_date", date)
+            .eq("start_time", startTime)
+            .neq("payment_status", "cancelled")
+            .limit(1);
+        if (conflictError)
+            throw new Error(conflictError.message);
+        if (conflictingAppointments && conflictingAppointments.length > 0) {
+            res.status(409).json({ error: "Este horário já está ocupado. Por favor escolha outro." });
+            return;
+        }
         const { data: appointment, error: apptError } = await supabase
             .from("appointments")
             .insert({
@@ -290,6 +305,10 @@ exports.bookingRouter.post("/:slug/appointment", async (req, res) => {
             payment_status: "pending",
         })
             .select().single();
+        if (apptError && apptError.code === "23505") {
+            res.status(409).json({ error: "Este horário já está ocupado. Por favor escolha outro." });
+            return;
+        }
         if (apptError)
             throw new Error(apptError.message);
         res.status(201).json({ appointment, clientId });

@@ -7,6 +7,7 @@ exports.sendPushToBusiness = sendPushToBusiness;
 exports.sendDayStartNotification = sendDayStartNotification;
 const web_push_1 = __importDefault(require("web-push"));
 const supabase_js_1 = require("@supabase/supabase-js");
+const date_1 = require("../utils/date");
 const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
 const supabase = (0, supabase_js_1.createClient)(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
@@ -28,43 +29,59 @@ function configureWebPush() {
 async function sendPushToBusiness(businessId, payload) {
     const { data, error: dbError } = await supabase
         .from("push_subscriptions")
-        .select("subscription")
-        .eq("business_id", businessId)
-        .single();
-    if (!data) {
-        console.warn(`[push] No subscription for business ${businessId}:`, dbError?.message);
-        return { sent: 0, error: "No subscription for business" };
+        .select("id, endpoint, subscription")
+        .eq("business_id", businessId);
+    if (dbError) {
+        console.error(`[push] Failed to load subscriptions for business ${businessId}:`, dbError.message);
+        return { found: 0, sent: 0, failed: 1, errors: [{ error: dbError.message }] };
     }
-    let sub;
-    try {
-        sub = typeof data.subscription === "string" ? JSON.parse(data.subscription) : data.subscription;
+    const subscriptions = data ?? [];
+    if (subscriptions.length === 0) {
+        console.warn(`[push] No subscription for business ${businessId}`);
+        return { found: 0, sent: 0, failed: 0, errors: [{ error: "No subscription for business" }] };
     }
-    catch {
-        console.error(`[push] Invalid subscription JSON for business ${businessId}`);
-        return { sent: 0, error: "Invalid subscription JSON" };
-    }
-    try {
-        configureWebPush();
-        console.log(`[push] Sending "${payload.title}" to business ${businessId}`);
-        await web_push_1.default.sendNotification(sub, JSON.stringify(payload));
-        console.log(`[push] OK - business ${businessId}`);
-        return { sent: 1 };
-    }
-    catch (err) {
-        console.error(`[push] Error for business ${businessId}:`, err?.statusCode, err?.message ?? err);
-        if (err?.statusCode === 410) {
-            await supabase.from("push_subscriptions").delete().eq("business_id", businessId);
-            console.log(`[push] Removed stale subscription for business ${businessId}`);
+    const result = { found: subscriptions.length, sent: 0, failed: 0, errors: [] };
+    configureWebPush();
+    for (const row of subscriptions) {
+        const endpoint = row.endpoint ?? null;
+        let sub;
+        try {
+            sub = typeof row.subscription === "string" ? JSON.parse(row.subscription) : row.subscription;
         }
-        return {
-            sent: 0,
-            error: err?.message ?? "Push send error",
-            statusCode: err?.statusCode,
-        };
+        catch {
+            console.error(`[push] Invalid subscription JSON for business ${businessId}`, endpoint);
+            result.failed += 1;
+            result.errors.push({ endpoint, error: "Invalid subscription JSON" });
+            continue;
+        }
+        try {
+            console.log(`[push] Sending "${payload.title}" to business ${businessId}`, endpoint);
+            await web_push_1.default.sendNotification(sub, JSON.stringify(payload));
+            console.log(`[push] OK - business ${businessId}`, endpoint);
+            result.sent += 1;
+        }
+        catch (err) {
+            const statusCode = err?.statusCode;
+            const error = err?.message ?? "Push send error";
+            console.error(`[push] Error for business ${businessId}:`, statusCode, error, endpoint);
+            result.failed += 1;
+            result.errors.push({ endpoint, error, statusCode });
+            if (statusCode === 404 || statusCode === 410) {
+                const deleteQuery = supabase.from("push_subscriptions").delete();
+                if (row.id) {
+                    await deleteQuery.eq("id", row.id);
+                }
+                else if (endpoint) {
+                    await deleteQuery.eq("endpoint", endpoint);
+                }
+                console.log(`[push] Removed stale subscription for business ${businessId}`, endpoint);
+            }
+        }
     }
+    return result;
 }
 async function sendDayStartNotification(businessId) {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = (0, date_1.todayBRT)();
     const { data: appointments } = await supabase
         .from("appointments")
         .select("start_time, clients(name)")

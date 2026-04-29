@@ -7,6 +7,7 @@ exports.getDashboardSummary = getDashboardSummary;
 const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
 const supabase_js_1 = require("@supabase/supabase-js");
+const date_1 = require("../utils/date");
 const supabase = (0, supabase_js_1.createClient)(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 function toSafeNumber(value) {
     const numericValue = Number(value ?? 0);
@@ -39,8 +40,8 @@ async function getDashboardSummary(businessId) {
         .from("fixed_costs")
         .select("amount")
         .eq("business_id", businessId);
-    const today = new Date().toISOString().slice(0, 10);
-    const month = new Date().toISOString().slice(0, 7);
+    const today = (0, date_1.todayBRT)();
+    const month = (0, date_1.currentMonthBRT)();
     let totalRevenue = 0;
     let totalMaterial = 0;
     let todayRevenue = 0;

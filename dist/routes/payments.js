@@ -9,6 +9,7 @@ const supabase_js_1 = require("@supabase/supabase-js");
 const crypto_1 = require("crypto");
 const paymentService_1 = require("../services/paymentService");
 const notificationService_1 = require("../services/notificationService");
+const date_1 = require("../utils/date");
 const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
 const supabase = (0, supabase_js_1.createClient)(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
@@ -161,7 +162,7 @@ exports.paymentsRouter.get("/status/:paymentId", async (req, res) => {
             if (appt && appt.payment_status !== "paid") {
                 await supabase
                     .from("appointments")
-                    .update({ payment_status: "paid", paid_date: new Date().toISOString().slice(0, 10) })
+                    .update({ payment_status: "paid", paid_date: (0, date_1.todayBRT)() })
                     .eq("id", appt.id);
                 await notifyPaidAppointment(appt.id);
             }
@@ -201,7 +202,7 @@ exports.paymentsRouter.post("/webhook", async (req, res) => {
                 console.log("[push-confirmed] payment paid detected");
                 await supabase
                     .from("appointments")
-                    .update({ payment_status: "paid", paid_date: new Date().toISOString().slice(0, 10) })
+                    .update({ payment_status: "paid", paid_date: (0, date_1.todayBRT)() })
                     .eq("mp_payment_id", paymentId);
                 await notifyPaidAppointment(appt.id);
             }

@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import { createHmac, timingSafeEqual } from "crypto";
 import { createPixPayment, getPaymentStatus } from "../services/paymentService";
 import { sendPushToBusiness } from "../services/notificationService";
+import { todayBRT } from "../utils/date";
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -182,7 +183,7 @@ paymentsRouter.get("/status/:paymentId", async (req: Request, res: Response) => 
       if (appt && appt.payment_status !== "paid") {
         await supabase
           .from("appointments")
-          .update({ payment_status: "paid", paid_date: new Date().toISOString().slice(0, 10) })
+          .update({ payment_status: "paid", paid_date: todayBRT() })
           .eq("id", appt.id);
         await notifyPaidAppointment(appt.id);
       }
@@ -228,7 +229,7 @@ paymentsRouter.post("/webhook", async (req: Request, res: Response) => {
         console.log("[push-confirmed] payment paid detected");
         await supabase
           .from("appointments")
-          .update({ payment_status: "paid", paid_date: new Date().toISOString().slice(0, 10) })
+          .update({ payment_status: "paid", paid_date: todayBRT() })
           .eq("mp_payment_id", paymentId);
         await notifyPaidAppointment(appt.id);
       }

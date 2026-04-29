@@ -1,5 +1,6 @@
 import { Router, Request, Response } from "express";
 import { createClient } from "@supabase/supabase-js";
+import { todayBRT } from "../utils/date";
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -96,7 +97,7 @@ bookingRouter.get("/:slug/my-appointments", async (req: Request, res: Response) 
   const normalized = String(phone).replace(/\D/g, "");
   const { data: client } = await supabase.from("clients").select("id").eq("business_id", business.id).ilike("phone", `%${normalized.slice(-8)}%`).single();
   if (!client) { res.json([]); return; }
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayBRT();
   const { data } = await supabase
     .from("appointments")
     .select("id, appointment_date, start_time, end_time, payment_status, services(name)")
@@ -223,6 +224,21 @@ bookingRouter.post("/:slug/appointment", async (req: Request, res: Response) => 
     const endDate = new Date(2000, 0, 1, h, m + duration);
     const endTime = `${String(endDate.getHours()).padStart(2, "0")}:${String(endDate.getMinutes()).padStart(2, "0")}`;
 
+    const { data: conflictingAppointments, error: conflictError } = await supabase
+      .from("appointments")
+      .select("id")
+      .eq("business_id", business.id)
+      .eq("appointment_date", date)
+      .eq("start_time", startTime)
+      .neq("payment_status", "cancelled")
+      .limit(1);
+
+    if (conflictError) throw new Error(conflictError.message);
+    if (conflictingAppointments && conflictingAppointments.length > 0) {
+      res.status(409).json({ error: "Este horário já está ocupado. Por favor escolha outro." });
+      return;
+    }
+
     const { data: appointment, error: apptError } = await supabase
       .from("appointments")
       .insert({
@@ -238,6 +254,10 @@ bookingRouter.post("/:slug/appointment", async (req: Request, res: Response) => 
       })
       .select().single();
 
+    if (apptError && apptError.code === "23505") {
+      res.status(409).json({ error: "Este horário já está ocupado. Por favor escolha outro." });
+      return;
+    }
     if (apptError) throw new Error(apptError.message);
     res.status(201).json({ appointment, clientId });
   } catch (err: any) {

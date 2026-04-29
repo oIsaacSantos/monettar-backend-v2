@@ -5,6 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getAvailableSlots = getAvailableSlots;
 const supabase_js_1 = require("@supabase/supabase-js");
+const date_1 = require("../utils/date");
 const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
 const supabase = (0, supabase_js_1.createClient)(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
@@ -69,13 +70,13 @@ async function getAvailableSlots(businessId, date, durationMinutes, period, book
         }
         current += 30;
     }
-    const today = new Date();
     if (!bookingMode)
         return slots;
-    const todayUTC = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
+    const [todayYear, todayMonth, todayDay] = (0, date_1.todayBRT)().split("-").map(Number);
+    const todayDateEpoch = Date.UTC(todayYear, todayMonth - 1, todayDay);
     const [year, month, day] = date.split("-").map(Number);
-    const targetUTC = Date.UTC(year, month - 1, day);
-    const daysAhead = Math.floor((targetUTC - todayUTC) / (1000 * 60 * 60 * 24));
+    const targetDateEpoch = Date.UTC(year, month - 1, day);
+    const daysAhead = Math.floor((targetDateEpoch - todayDateEpoch) / (1000 * 60 * 60 * 24));
     let maxSlots;
     if (daysAhead <= 7)
         maxSlots = 2;

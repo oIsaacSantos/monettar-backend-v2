@@ -1,5 +1,6 @@
 import webpush from "web-push";
 import { createClient } from "@supabase/supabase-js";
+import { todayBRT } from "../utils/date";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -34,45 +35,70 @@ export async function sendPushToBusiness(
 ) {
   const { data, error: dbError } = await supabase
     .from("push_subscriptions")
-    .select("subscription")
-    .eq("business_id", businessId)
-    .single();
+    .select("id, endpoint, subscription")
+    .eq("business_id", businessId);
 
-  if (!data) {
-    console.warn(`[push] No subscription for business ${businessId}:`, dbError?.message);
-    return { sent: 0, error: "No subscription for business" };
+  if (dbError) {
+    console.error(`[push] Failed to load subscriptions for business ${businessId}:`, dbError.message);
+    return { found: 0, sent: 0, failed: 1, errors: [{ error: dbError.message }] };
   }
 
-  let sub: any;
-  try {
-    sub = typeof data.subscription === "string" ? JSON.parse(data.subscription) : data.subscription;
-  } catch {
-    console.error(`[push] Invalid subscription JSON for business ${businessId}`);
-    return { sent: 0, error: "Invalid subscription JSON" };
+  const subscriptions = data ?? [];
+  if (subscriptions.length === 0) {
+    console.warn(`[push] No subscription for business ${businessId}`);
+    return { found: 0, sent: 0, failed: 0, errors: [{ error: "No subscription for business" }] };
   }
 
-  try {
-    configureWebPush();
-    console.log(`[push] Sending "${payload.title}" to business ${businessId}`);
-    await webpush.sendNotification(sub, JSON.stringify(payload));
-    console.log(`[push] OK - business ${businessId}`);
-    return { sent: 1 };
-  } catch (err: any) {
-    console.error(`[push] Error for business ${businessId}:`, err?.statusCode, err?.message ?? err);
-    if (err?.statusCode === 410) {
-      await supabase.from("push_subscriptions").delete().eq("business_id", businessId);
-      console.log(`[push] Removed stale subscription for business ${businessId}`);
+  const result: {
+    found: number;
+    sent: number;
+    failed: number;
+    errors: Array<{ endpoint?: string | null; error: string; statusCode?: number }>;
+  } = { found: subscriptions.length, sent: 0, failed: 0, errors: [] };
+
+  configureWebPush();
+
+  for (const row of subscriptions as any[]) {
+    const endpoint = row.endpoint ?? null;
+    let sub: any;
+    try {
+      sub = typeof row.subscription === "string" ? JSON.parse(row.subscription) : row.subscription;
+    } catch {
+      console.error(`[push] Invalid subscription JSON for business ${businessId}`, endpoint);
+      result.failed += 1;
+      result.errors.push({ endpoint, error: "Invalid subscription JSON" });
+      continue;
     }
-    return {
-      sent: 0,
-      error: err?.message ?? "Push send error",
-      statusCode: err?.statusCode,
-    };
+
+    try {
+      console.log(`[push] Sending "${payload.title}" to business ${businessId}`, endpoint);
+      await webpush.sendNotification(sub, JSON.stringify(payload));
+      console.log(`[push] OK - business ${businessId}`, endpoint);
+      result.sent += 1;
+    } catch (err: any) {
+      const statusCode = err?.statusCode;
+      const error = err?.message ?? "Push send error";
+      console.error(`[push] Error for business ${businessId}:`, statusCode, error, endpoint);
+      result.failed += 1;
+      result.errors.push({ endpoint, error, statusCode });
+
+      if (statusCode === 404 || statusCode === 410) {
+        const deleteQuery = supabase.from("push_subscriptions").delete();
+        if (row.id) {
+          await deleteQuery.eq("id", row.id);
+        } else if (endpoint) {
+          await deleteQuery.eq("endpoint", endpoint);
+        }
+        console.log(`[push] Removed stale subscription for business ${businessId}`, endpoint);
+      }
+    }
   }
+
+  return result;
 }
 
 export async function sendDayStartNotification(businessId: string) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayBRT();
   const { data: appointments } = await supabase
     .from("appointments")
     .select("start_time, clients(name)")

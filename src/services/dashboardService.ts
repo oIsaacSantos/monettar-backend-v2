@@ -2,6 +2,7 @@ import dotenv from "dotenv";
 dotenv.config();
 
 import { createClient } from "@supabase/supabase-js";
+import { currentMonthBRT, todayBRT } from "../utils/date";
 
 const supabase = createClient(
   process.env.SUPABASE_URL!,
@@ -52,8 +53,8 @@ export async function getDashboardSummary(businessId: string) {
     .select("amount")
     .eq("business_id", businessId);
 
-  const today = new Date().toISOString().slice(0, 10);
-  const month = new Date().toISOString().slice(0, 7);
+  const today = todayBRT();
+  const month = currentMonthBRT();
 
   let totalRevenue = 0;
   let totalMaterial = 0;

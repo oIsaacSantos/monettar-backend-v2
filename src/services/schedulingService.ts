@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { todayBRT } from "../utils/date";
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -89,14 +90,13 @@ export async function getAvailableSlots(
     current += 30;
   }
 
-  const today = new Date();
-
   if (!bookingMode) return slots;
 
-  const todayUTC = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
+  const [todayYear, todayMonth, todayDay] = todayBRT().split("-").map(Number);
+  const todayDateEpoch = Date.UTC(todayYear, todayMonth - 1, todayDay);
   const [year, month, day] = date.split("-").map(Number);
-  const targetUTC = Date.UTC(year, month - 1, day);
-  const daysAhead = Math.floor((targetUTC - todayUTC) / (1000 * 60 * 60 * 24));
+  const targetDateEpoch = Date.UTC(year, month - 1, day);
+  const daysAhead = Math.floor((targetDateEpoch - todayDateEpoch) / (1000 * 60 * 60 * 24));
 
   let maxSlots: number;
   if (daysAhead <= 7) maxSlots = 2;
