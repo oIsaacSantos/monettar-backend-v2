@@ -14,6 +14,7 @@ import { authRouter } from "./routes/auth";
 import { bookingLeadsRouter } from "./routes/bookingLeads";
 import { packagesRouter } from "./routes/packages";
 import { cronRouter } from "./routes/cron";
+import { requireBusinessAccess } from "./middleware/auth";
 
 dotenv.config({ path: path.resolve(__dirname, "../.env") });
 
@@ -27,17 +28,17 @@ app.get("/api/health", (req, res) => {
   res.json({ status: "ok" });
 });
 
-app.use("/api/dashboard", dashboardRouter);
-app.use("/api/appointments", appointmentsRouter);
-app.use("/api/clients", clientsRouter);
-app.use("/api/services", servicesRouter);
-app.use("/api/fixed-costs", fixedCostsRouter);
-app.use("/api/business", businessRouter);
+app.use("/api/dashboard", requireBusinessAccess, dashboardRouter);
+app.use("/api/appointments", requireBusinessAccess, appointmentsRouter);
+app.use("/api/clients", requireBusinessAccess, clientsRouter);
+app.use("/api/services", requireBusinessAccess, servicesRouter);
+app.use("/api/fixed-costs", requireBusinessAccess, fixedCostsRouter);
+app.use("/api/business", requireBusinessAccess, businessRouter);
 app.use("/api/booking", bookingRouter);
 app.use("/api/booking-leads", bookingLeadsRouter);
 app.use("/api/payments", paymentsRouter);
 app.use("/api/auth", authRouter);
-app.use("/api/packages", packagesRouter);
+app.use("/api/packages", requireBusinessAccess, packagesRouter);
 app.use("/api/cron", cronRouter);
 
 app.listen(PORT, () => {
