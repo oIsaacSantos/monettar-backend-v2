@@ -1,13 +1,45 @@
 import { Router, Request, Response } from "express";
-import { deleteAppointment, getAllAppointments, getAppointmentsByDate, getAppointmentsByMonth, updateAppointment } from "../services/appointmentsService";
-import { getAvailableSlots } from "../services/schedulingService";
+import { createAppointment, deleteAppointment, getAllAppointments, getAppointmentsByDate, getAppointmentsByMonth, updateAppointment } from "../services/appointmentsService";
+import { getAvailableSlots, validateAppointmentSlot } from "../services/schedulingService";
 
 export const appointmentsRouter = Router();
+
+appointmentsRouter.post("/", async (req: Request, res: Response) => {
+  const { businessId, serviceId, clientId, appointmentDate, startTime, endTime, chargedAmount, status, notes } = req.body;
+  if (!businessId || !serviceId || !clientId || !appointmentDate || !startTime || !endTime) {
+    res.status(400).json({ error: "businessId, serviceId, clientId, appointmentDate, startTime e endTime são obrigatórios" });
+    return;
+  }
+  try {
+    const validation = await validateAppointmentSlot(businessId, appointmentDate, startTime, endTime);
+    if (!validation.valid) {
+      res.status(409).json({ error: validation.reason });
+      return;
+    }
+    const data = await createAppointment({ businessId, serviceId, clientId, appointmentDate, startTime, endTime, chargedAmount: Number(chargedAmount) || 0, status: status ?? "pending", notes });
+    res.status(201).json(data);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 appointmentsRouter.put("/:id", async (req: Request, res: Response) => {
   const { businessId } = req.query;
   const { id } = req.params;
   if (!businessId) { res.status(400).json({ error: "businessId obrigatório" }); return; }
+  const { date, startTime, endTime } = req.body;
+  if (date && startTime && endTime) {
+    try {
+      const validation = await validateAppointmentSlot(businessId as string, date, startTime, endTime, id);
+      if (!validation.valid) {
+        res.status(409).json({ error: validation.reason });
+        return;
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+      return;
+    }
+  }
   try {
     res.json(await updateAppointment(id, businessId as string, req.body));
   } catch (err: any) {

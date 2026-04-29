@@ -5,12 +5,45 @@ const express_1 = require("express");
 const appointmentsService_1 = require("../services/appointmentsService");
 const schedulingService_1 = require("../services/schedulingService");
 exports.appointmentsRouter = (0, express_1.Router)();
+exports.appointmentsRouter.post("/", async (req, res) => {
+    const { businessId, serviceId, clientId, appointmentDate, startTime, endTime, chargedAmount, status, notes } = req.body;
+    if (!businessId || !serviceId || !clientId || !appointmentDate || !startTime || !endTime) {
+        res.status(400).json({ error: "businessId, serviceId, clientId, appointmentDate, startTime e endTime são obrigatórios" });
+        return;
+    }
+    try {
+        const validation = await (0, schedulingService_1.validateAppointmentSlot)(businessId, appointmentDate, startTime, endTime);
+        if (!validation.valid) {
+            res.status(409).json({ error: validation.reason });
+            return;
+        }
+        const data = await (0, appointmentsService_1.createAppointment)({ businessId, serviceId, clientId, appointmentDate, startTime, endTime, chargedAmount: Number(chargedAmount) || 0, status: status ?? "pending", notes });
+        res.status(201).json(data);
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
 exports.appointmentsRouter.put("/:id", async (req, res) => {
     const { businessId } = req.query;
     const { id } = req.params;
     if (!businessId) {
         res.status(400).json({ error: "businessId obrigatório" });
         return;
+    }
+    const { date, startTime, endTime } = req.body;
+    if (date && startTime && endTime) {
+        try {
+            const validation = await (0, schedulingService_1.validateAppointmentSlot)(businessId, date, startTime, endTime, id);
+            if (!validation.valid) {
+                res.status(409).json({ error: validation.reason });
+                return;
+            }
+        }
+        catch (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
     }
     try {
         res.json(await (0, appointmentsService_1.updateAppointment)(id, businessId, req.body));

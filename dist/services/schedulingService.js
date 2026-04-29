@@ -3,6 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.validateAppointmentSlot = validateAppointmentSlot;
 exports.getAvailableSlots = getAvailableSlots;
 const supabase_js_1 = require("@supabase/supabase-js");
 const date_1 = require("../utils/date");
@@ -232,6 +233,70 @@ function curateBookingSlots(slots, date, sessionSeed) {
     // Mantem a variacao da selecao, mas exibe em ordem cronologica.
     result.sort();
     return result;
+}
+async function validateAppointmentSlot(businessId, date, startTime, endTime, excludeAppointmentId) {
+    const startMins = timeToMinutes(startTime);
+    const endMins = timeToMinutes(endTime);
+    if (endMins <= startMins) {
+        return { valid: false, reason: "Horário de término deve ser após o horário de início." };
+    }
+    const { data: business } = await supabase
+        .from("businesses")
+        .select("work_start_time, work_end_time, work_days_of_week, work_hours_by_day, lunch_break_active, lunch_start_time, lunch_end_time, appointment_buffer_minutes")
+        .eq("id", businessId)
+        .single();
+    const workDays = business?.work_days_of_week ?? [1, 2, 3, 4, 5, 6];
+    const targetDayOfWeek = getTargetDayOfWeek(date);
+    const { workStart, workEnd } = getWorkRange(business, targetDayOfWeek);
+    const lunchBreak = getLunchBreak(business);
+    const buffer = getAppointmentBufferMinutes(business);
+    const { data: overrides } = await supabase
+        .from("schedule_overrides")
+        .select("id, business_id, date, start_time, end_time, type")
+        .eq("business_id", businessId)
+        .eq("date", date);
+    const overridesList = (overrides ?? []);
+    if (hasFullDayBlock(overridesList)) {
+        return { valid: false, reason: "Este dia está bloqueado na agenda." };
+    }
+    const isWorkDay = workDays.includes(targetDayOfWeek);
+    const hasOpenOverride = overridesList.some((o) => o.type === "open_full_day" || o.type === "open_time_range");
+    if (!isWorkDay && !hasOpenOverride) {
+        return { valid: false, reason: "Este dia não é um dia de trabalho." };
+    }
+    const workRange = { start: workStart, end: workEnd };
+    const baseBlocks = isWorkDay ? [workRange] : [];
+    const openBlocks = applyOpenOverrides(baseBlocks, overridesList, workRange);
+    const mergedBlocks = openBlocks.flatMap((b) => buildAvailabilityBlocks(b, lunchBreak));
+    const fitsInBlock = mergedBlocks.some((b) => startMins >= b.start && endMins <= b.end);
+    if (!fitsInBlock) {
+        if (lunchBreak && startMins < lunchBreak.end && endMins > lunchBreak.start) {
+            return { valid: false, reason: "Horário conflita com o intervalo de almoço." };
+        }
+        return { valid: false, reason: "Horário fora do expediente de trabalho." };
+    }
+    const blockRanges = getBlockRanges(overridesList);
+    if (hasBlockConflict(startMins, endMins, blockRanges)) {
+        return { valid: false, reason: "Horário está em um período bloqueado." };
+    }
+    let query = supabase
+        .from("appointments")
+        .select("id, start_time, end_time")
+        .eq("business_id", businessId)
+        .eq("appointment_date", date)
+        .not("payment_status", "eq", "cancelled");
+    if (excludeAppointmentId) {
+        query = query.neq("id", excludeAppointmentId);
+    }
+    const { data: appointments } = await query;
+    const occupied = (appointments ?? []).map((a) => ({
+        start: timeToMinutes(a.start_time),
+        end: timeToMinutes(a.end_time),
+    }));
+    if (hasOccupiedConflict(startMins, endMins, occupied, buffer)) {
+        return { valid: false, reason: "Horário conflita com outro atendimento agendado." };
+    }
+    return { valid: true };
 }
 async function getAvailableSlots(businessId, date, durationMinutes, period, bookingMode = false, sessionSeed) {
     const { data: business } = await supabase
