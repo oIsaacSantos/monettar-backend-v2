@@ -14,11 +14,26 @@ function normalizeDescription(description?: string | null) {
 }
 
 export async function getServices(businessId: string) {
-  const { data, error } = await supabase
+  const result = await supabase
     .from("services")
-    .select("id, name, current_price, duration_minutes, material_cost_estimate, active, description")
+    .select("id, name, current_price, duration_minutes, material_cost_estimate, active, description, sort_order, created_at")
     .eq("business_id", businessId)
-    .order("name");
+    .order("sort_order", { ascending: true })
+    .order("name", { ascending: true });
+
+  if (result.error && result.error.message.includes("sort_order")) {
+    const fallback = await supabase
+      .from("services")
+      .select("id, name, current_price, duration_minutes, material_cost_estimate, active, description, created_at")
+      .eq("business_id", businessId)
+      .order("created_at", { ascending: true })
+      .order("name", { ascending: true });
+
+    if (fallback.error) throw new Error(fallback.error.message);
+    return fallback.data ?? [];
+  }
+
+  const { data, error } = result;
   if (error) throw new Error(error.message);
   return data ?? [];
 }
@@ -26,18 +41,41 @@ export async function getServices(businessId: string) {
 export async function createService(businessId: string, payload: {
   name: string; durationMinutes: number; price: number; materialCost: number; description?: string | null;
 }) {
-  const { data, error } = await supabase
+  const { data: lastService, error: lastServiceError } = await supabase
     .from("services")
-    .insert({
-      business_id: businessId,
-      name: payload.name,
-      duration_minutes: payload.durationMinutes,
-      current_price: payload.price,
-      material_cost_estimate: payload.materialCost,
-      description: normalizeDescription(payload.description),
-      active: true,
-    })
+    .select("sort_order")
+    .eq("business_id", businessId)
+    .order("sort_order", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const insertPayload = {
+    business_id: businessId,
+    name: payload.name,
+    duration_minutes: payload.durationMinutes,
+    current_price: payload.price,
+    material_cost_estimate: payload.materialCost,
+    description: normalizeDescription(payload.description),
+    active: true,
+    sort_order: lastServiceError ? undefined : Number(lastService?.sort_order ?? 0) + 1,
+  };
+
+  const insertResult = await supabase
+    .from("services")
+    .insert(insertPayload)
     .select().single();
+
+  if (insertResult.error && insertResult.error.message.includes("sort_order")) {
+    const { sort_order, ...fallbackPayload } = insertPayload;
+    const fallback = await supabase
+      .from("services")
+      .insert(fallbackPayload)
+      .select().single();
+    if (fallback.error) throw new Error(fallback.error.message);
+    return fallback.data;
+  }
+
+  const { data, error } = insertResult;
   if (error) throw new Error(error.message);
   return data;
 }
@@ -61,4 +99,18 @@ export async function updateService(id: string, businessId: string, payload: {
     .select().single();
   if (error) throw new Error(error.message);
   return data;
+}
+
+export async function reorderServices(businessId: string, serviceIds: string[]) {
+  for (const [index, id] of serviceIds.entries()) {
+    const { error } = await supabase
+      .from("services")
+      .update({ sort_order: index + 1 })
+      .eq("id", id)
+      .eq("business_id", businessId);
+
+    if (error) throw new Error(error.message);
+  }
+
+  return getServices(businessId);
 }

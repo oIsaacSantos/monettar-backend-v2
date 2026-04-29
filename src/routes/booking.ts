@@ -41,20 +41,38 @@ bookingRouter.get("/:slug/services", async (req: Request, res: Response) => {
   const { data: business } = await supabase
     .from("businesses").select("id").eq("slug", slug).single();
   if (!business) { res.status(404).json({ error: "Negócio não encontrado" }); return; }
-  const { data } = await supabase
+  const servicesResult = await supabase
     .from("services")
-    .select("id, name, current_price, duration_minutes, description")
+    .select("id, name, current_price, duration_minutes, description, sort_order, created_at")
     .eq("business_id", business.id)
     .eq("active", true)
-    .order("name");
+    .order("sort_order", { ascending: true })
+    .order("name", { ascending: true });
+
+  if (servicesResult.error && servicesResult.error.message.includes("sort_order")) {
+    const fallback = await supabase
+      .from("services")
+      .select("id, name, current_price, duration_minutes, description, created_at")
+      .eq("business_id", business.id)
+      .eq("active", true)
+      .order("created_at", { ascending: true })
+      .order("name", { ascending: true });
+
+    if (fallback.error) { res.status(500).json({ error: fallback.error.message }); return; }
+    res.json(fallback.data ?? []);
+    return;
+  }
+
+  if (servicesResult.error) { res.status(500).json({ error: servicesResult.error.message }); return; }
+  const { data } = servicesResult;
   res.json(data ?? []);
 });
 
 // Horários disponíveis (com curadoria de booking)
 bookingRouter.get("/:slug/available-slots", async (req: Request, res: Response) => {
   const { slug } = req.params;
-  const { date, duration, period, seed } = req.query;
-  console.log("[booking] available-slots chamado — slug:", req.params.slug, "date:", date, "duration:", duration, "period:", period);
+  const { date, duration, seed } = req.query;
+  console.log("[booking] available-slots chamado — slug:", req.params.slug, "date:", date, "duration:", duration);
   const { data: business } = await supabase
     .from("businesses").select("id").eq("slug", slug).single();
   if (!business) { res.status(404).json({ error: "Negócio não encontrado" }); return; }
@@ -63,7 +81,7 @@ bookingRouter.get("/:slug/available-slots", async (req: Request, res: Response) 
     business.id,
     date as string,
     Number(duration),
-    period as any,
+    undefined,
     true,
     seed ? Number(seed) : undefined
   );
@@ -145,6 +163,18 @@ bookingRouter.post("/:slug/appointment", async (req: Request, res: Response) => 
 
     if (existing) {
       clientId = existing.id;
+      const updates: Record<string, string | null> = {};
+      if (name) updates.name = name;
+      if (birthdate) updates.birthdate = birthdate;
+      if (gender) updates.gender = gender;
+      if (genderCustom) updates.gender_custom = genderCustom;
+      if (Object.keys(updates).length > 0) {
+        await supabase
+          .from("clients")
+          .update(updates)
+          .eq("id", clientId)
+          .eq("business_id", business.id);
+      }
     } else {
       const insertResult = await supabase
         .from("clients")

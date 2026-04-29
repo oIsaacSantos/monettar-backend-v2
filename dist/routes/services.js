@@ -7,7 +7,7 @@ exports.servicesRouter = (0, express_1.Router)();
 exports.servicesRouter.get("/", async (req, res) => {
     const { businessId } = req.query;
     if (!businessId) {
-        res.status(400).json({ error: "businessId obrigatório" });
+        res.status(400).json({ error: "businessId obrigatorio" });
         return;
     }
     try {
@@ -20,7 +20,7 @@ exports.servicesRouter.get("/", async (req, res) => {
 exports.servicesRouter.post("/", async (req, res) => {
     const { businessId } = req.query;
     if (!businessId) {
-        res.status(400).json({ error: "businessId obrigatório" });
+        res.status(400).json({ error: "businessId obrigatorio" });
         return;
     }
     try {
@@ -30,11 +30,28 @@ exports.servicesRouter.post("/", async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
+exports.servicesRouter.patch("/reorder", async (req, res) => {
+    const { businessId, serviceIds } = req.body;
+    if (!businessId) {
+        res.status(400).json({ error: "businessId obrigatorio" });
+        return;
+    }
+    if (!Array.isArray(serviceIds)) {
+        res.status(400).json({ error: "serviceIds obrigatorio" });
+        return;
+    }
+    try {
+        res.json(await (0, servicesService_1.reorderServices)(businessId, serviceIds));
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
 exports.servicesRouter.put("/:id", async (req, res) => {
     const { businessId } = req.query;
     const { id } = req.params;
     if (!businessId) {
-        res.status(400).json({ error: "businessId obrigatório" });
+        res.status(400).json({ error: "businessId obrigatorio" });
         return;
     }
     try {
