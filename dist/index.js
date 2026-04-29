@@ -7,6 +7,7 @@ const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
 const dotenv_1 = __importDefault(require("dotenv"));
 const path_1 = __importDefault(require("path"));
+const express_rate_limit_1 = __importDefault(require("express-rate-limit"));
 const dashboard_1 = require("./routes/dashboard");
 const appointments_1 = require("./routes/appointments");
 const clients_1 = require("./routes/clients");
@@ -23,6 +24,13 @@ const auth_2 = require("./middleware/auth");
 dotenv_1.default.config({ path: path_1.default.resolve(__dirname, "../.env") });
 const app = (0, express_1.default)();
 const PORT = process.env.PORT || 3001;
+const publicBookingRateLimit = (0, express_rate_limit_1.default)({
+    windowMs: 60 * 1000,
+    limit: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: "Muitas tentativas. Aguarde um momento e tente novamente.",
+});
 app.use((0, cors_1.default)());
 app.use(express_1.default.json());
 app.get("/api/health", (req, res) => {
@@ -34,7 +42,7 @@ app.use("/api/clients", auth_2.requireBusinessAccess, clients_1.clientsRouter);
 app.use("/api/services", auth_2.requireBusinessAccess, services_1.servicesRouter);
 app.use("/api/fixed-costs", auth_2.requireBusinessAccess, fixedCosts_1.fixedCostsRouter);
 app.use("/api/business", auth_2.requireBusinessAccess, business_1.businessRouter);
-app.use("/api/booking", booking_1.bookingRouter);
+app.use("/api/booking", publicBookingRateLimit, booking_1.bookingRouter);
 app.use("/api/booking-leads", bookingLeads_1.bookingLeadsRouter);
 app.use("/api/payments", payments_1.paymentsRouter);
 app.use("/api/auth", auth_1.authRouter);
