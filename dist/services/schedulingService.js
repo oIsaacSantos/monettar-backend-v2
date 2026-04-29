@@ -298,7 +298,7 @@ async function validateAppointmentSlot(businessId, date, startTime, endTime, exc
     }
     return { valid: true };
 }
-async function getAvailableSlots(businessId, date, durationMinutes, period, bookingMode = false, sessionSeed) {
+async function getAvailableSlots(businessId, date, durationMinutes, period, bookingMode = false, sessionSeed, excludeAppointmentId) {
     const { data: business } = await supabase
         .from("businesses")
         .select("work_start_time, work_end_time, work_days_of_week, work_hours_by_day, lunch_break_active, lunch_start_time, lunch_end_time, appointment_buffer_minutes")
@@ -318,12 +318,16 @@ async function getAvailableSlots(businessId, date, durationMinutes, period, book
         .select("id, business_id, date, start_time, end_time, type")
         .eq("business_id", businessId)
         .eq("date", date);
-    const { data: appointments } = await supabase
+    let apptQuery = supabase
         .from("appointments")
         .select("start_time, end_time")
         .eq("business_id", businessId)
         .eq("appointment_date", date)
         .not("payment_status", "eq", "cancelled");
+    if (excludeAppointmentId) {
+        apptQuery = apptQuery.neq("id", excludeAppointmentId);
+    }
+    const { data: appointments } = await apptQuery;
     const occupied = (appointments ?? []).map((a) => ({
         start: timeToMinutes(a.start_time),
         end: timeToMinutes(a.end_time),

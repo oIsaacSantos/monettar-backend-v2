@@ -82,13 +82,13 @@ exports.appointmentsRouter.get("/all", async (req, res) => {
     }
 });
 exports.appointmentsRouter.get("/available-slots", async (req, res) => {
-    const { businessId, date, duration, period } = req.query;
+    const { businessId, date, duration, period, excludeAppointmentId } = req.query;
     if (!businessId || !date || !duration) {
         res.status(400).json({ error: "businessId, date e duration são obrigatórios" });
         return;
     }
     try {
-        const slots = await (0, schedulingService_1.getAvailableSlots)(businessId, date, Number(duration), period);
+        const slots = await (0, schedulingService_1.getAvailableSlots)(businessId, date, Number(duration), period, false, undefined, excludeAppointmentId);
         res.json({ slots });
     }
     catch (err) {

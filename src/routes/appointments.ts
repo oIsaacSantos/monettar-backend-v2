@@ -71,7 +71,7 @@ appointmentsRouter.get("/all", async (req: Request, res: Response) => {
 });
 
 appointmentsRouter.get("/available-slots", async (req: Request, res: Response) => {
-  const { businessId, date, duration, period } = req.query;
+  const { businessId, date, duration, period, excludeAppointmentId } = req.query;
   if (!businessId || !date || !duration) {
     res.status(400).json({ error: "businessId, date e duration são obrigatórios" });
     return;
@@ -81,7 +81,10 @@ appointmentsRouter.get("/available-slots", async (req: Request, res: Response) =
       businessId as string,
       date as string,
       Number(duration),
-      period as any
+      period as any,
+      false,
+      undefined,
+      excludeAppointmentId as string | undefined
     );
     res.json({ slots });
   } catch (err: any) {

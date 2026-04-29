@@ -417,7 +417,8 @@ export async function getAvailableSlots(
   durationMinutes: number,
   period?: Period,
   bookingMode: boolean = false,
-  sessionSeed?: number
+  sessionSeed?: number,
+  excludeAppointmentId?: string
 ) {
   const { data: business } = await supabase
     .from("businesses")
@@ -441,12 +442,18 @@ export async function getAvailableSlots(
     .eq("business_id", businessId)
     .eq("date", date);
 
-  const { data: appointments } = await supabase
+  let apptQuery = supabase
     .from("appointments")
     .select("start_time, end_time")
     .eq("business_id", businessId)
     .eq("appointment_date", date)
     .not("payment_status", "eq", "cancelled");
+
+  if (excludeAppointmentId) {
+    apptQuery = apptQuery.neq("id", excludeAppointmentId);
+  }
+
+  const { data: appointments } = await apptQuery;
 
   const occupied = (appointments ?? []).map((a: any) => ({
     start: timeToMinutes(a.start_time),
