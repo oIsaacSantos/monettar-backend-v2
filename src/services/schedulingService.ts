@@ -8,6 +8,16 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
+type Period = "morning" | "afternoon" | "evening";
+type WorkHoursByDay = Record<string, { start: string; end: string }>;
+type OccupiedSlot = { start: number; end: number };
+
+const BOOKING_BUFFER_MINUTES = 10;
+const SLOT_INTERVAL_MINUTES = 30;
+const LUNCH_START_TIME = "12:00";
+const LUNCH_END_TIME = "13:00";
+const EVENING_START_TIME = "18:00";
+
 function timeToMinutes(time: string): number {
   const [h, m] = time.split(":").map(Number);
   return h * 60 + m;
@@ -19,11 +29,157 @@ function minutesToTime(minutes: number): string {
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
+function getTargetDayOfWeek(date: string) {
+  return new Date(date + "T12:00:00Z").getUTCDay();
+}
+
+function getWorkRange(
+  business: any,
+  targetDayOfWeek: number
+) {
+  const workHoursByDay = business?.work_hours_by_day as WorkHoursByDay | null;
+  const dayKey = String(targetDayOfWeek);
+  const dayStart = workHoursByDay?.[dayKey]?.start ?? business?.work_start_time ?? "08:00";
+  const dayEnd = workHoursByDay?.[dayKey]?.end ?? business?.work_end_time ?? "19:00";
+
+  return {
+    workStart: timeToMinutes(dayStart),
+    workEnd: timeToMinutes(dayEnd),
+  };
+}
+
+function getPeriodRange(
+  period: Period | undefined,
+  workStart: number,
+  workEnd: number,
+  lunchStart: number,
+  lunchEnd: number
+) {
+  const periodRanges = {
+    morning: { start: workStart, end: Math.min(lunchStart, workEnd) },
+    afternoon: { start: lunchEnd, end: Math.min(timeToMinutes(EVENING_START_TIME), workEnd) },
+    evening: { start: timeToMinutes(EVENING_START_TIME), end: workEnd },
+  };
+
+  return period ? periodRanges[period] : { start: workStart, end: workEnd };
+}
+
+function hasOccupiedConflict(
+  start: number,
+  end: number,
+  occupied: OccupiedSlot[],
+  buffer: number
+) {
+  return occupied.some((slot) => start < slot.end + buffer && end > slot.start - buffer);
+}
+
+function buildRealAvailabilitySlots(params: {
+  workStart: number;
+  workEnd: number;
+  durationMinutes: number;
+  period?: Period;
+  occupied: OccupiedSlot[];
+}) {
+  const lunchStart = timeToMinutes(LUNCH_START_TIME);
+  const lunchEnd = timeToMinutes(LUNCH_END_TIME);
+  const range = getPeriodRange(
+    params.period,
+    params.workStart,
+    params.workEnd,
+    lunchStart,
+    lunchEnd
+  );
+  const slots: string[] = [];
+  let current = range.start;
+
+  // Disponibilidade real: expediente, almoco fixo atual, duracao, appointments e buffer.
+  while (current + params.durationMinutes <= range.end) {
+    const slotEnd = current + params.durationMinutes;
+    const isLunch = current < lunchEnd && slotEnd > lunchStart;
+    const isOccupied = hasOccupiedConflict(
+      current,
+      slotEnd,
+      params.occupied,
+      BOOKING_BUFFER_MINUTES
+    );
+
+    if (!isLunch && !isOccupied) {
+      slots.push(minutesToTime(current));
+    }
+
+    current += SLOT_INTERVAL_MINUTES;
+  }
+
+  return slots;
+}
+
+function getDaysAhead(date: string) {
+  const [todayYear, todayMonth, todayDay] = todayBRT().split("-").map(Number);
+  const todayDateEpoch = Date.UTC(todayYear, todayMonth - 1, todayDay);
+  const [year, month, day] = date.split("-").map(Number);
+  const targetDateEpoch = Date.UTC(year, month - 1, day);
+
+  return Math.floor((targetDateEpoch - todayDateEpoch) / (1000 * 60 * 60 * 24));
+}
+
+function getBookingMaxSlots(daysAhead: number) {
+  if (daysAhead <= 7) return 2;
+  if (daysAhead <= 20) return 3;
+  return 4;
+}
+
+function shuffleSlotsWithSeed(slots: string[], date: string, sessionSeed?: number) {
+  const [year, month, day] = date.split("-").map(Number);
+  const dateSeed = year * 10000 + month * 100 + day;
+  const combinedSeed = ((sessionSeed ?? 0) + dateSeed) % 999983;
+  let seed = combinedSeed === 0 ? 12345 : combinedSeed;
+
+  const rng = () => {
+    seed = Math.imul(1664525, seed) + 1013904223;
+    seed = seed >>> 0;
+    return seed / 4294967296;
+  };
+
+  const shuffled = [...slots];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+
+  return shuffled;
+}
+
+function curateBookingSlots(slots: string[], date: string, sessionSeed?: number) {
+  const maxSlots = getBookingMaxSlots(getDaysAhead(date));
+  if (slots.length <= maxSlots) return slots;
+
+  const shuffled = shuffleSlotsWithSeed(slots, date, sessionSeed);
+  const morning = shuffled.filter((time) => parseInt(time.split(":")[0]) < 12);
+  const afternoon = shuffled.filter((time) => parseInt(time.split(":")[0]) >= 12);
+  const result: string[] = [];
+
+  // Curadoria do booking publico: poucos horarios criam percepcao de agenda cheia.
+  if (morning.length > 0 && afternoon.length > 0) {
+    result.push(morning[0]);
+    result.push(afternoon[0]);
+    for (const slot of shuffled) {
+      if (result.length >= maxSlots) break;
+      if (!result.includes(slot)) result.push(slot);
+    }
+  } else {
+    result.push(...shuffled.slice(0, maxSlots));
+  }
+
+  // Mantem a variacao da selecao, mas exibe em ordem cronologica.
+  result.sort();
+  return result;
+}
+
 export async function getAvailableSlots(
   businessId: string,
   date: string,
   durationMinutes: number,
-  period?: "morning" | "afternoon" | "evening",
+  period?: Period,
   bookingMode: boolean = false,
   sessionSeed?: number
 ) {
@@ -34,7 +190,7 @@ export async function getAvailableSlots(
     .single();
 
   const workDays: number[] = (business?.work_days_of_week as number[] | null) ?? [1, 2, 3, 4, 5, 6];
-  const targetDayOfWeek = new Date(date + "T12:00:00Z").getUTCDay();
+  const targetDayOfWeek = getTargetDayOfWeek(date);
   console.log("[scheduling] business.work_days_of_week:", business?.work_days_of_week, typeof business?.work_days_of_week);
   console.log("[scheduling] targetDayOfWeek:", targetDayOfWeek);
   console.log("[scheduling] workDays:", workDays);
@@ -43,15 +199,7 @@ export async function getAvailableSlots(
     return [];
   }
 
-  const workHoursByDay = business?.work_hours_by_day as Record<string, { start: string; end: string }> | null;
-  const dayKey = String(targetDayOfWeek);
-  const dayStart = workHoursByDay?.[dayKey]?.start ?? business?.work_start_time ?? "08:00";
-  const dayEnd = workHoursByDay?.[dayKey]?.end ?? business?.work_end_time ?? "19:00";
-
-  const workStart = timeToMinutes(dayStart);
-  const workEnd = timeToMinutes(dayEnd);
-  const lunchStart = timeToMinutes("12:00");
-  const lunchEnd = timeToMinutes("13:00");
+  const { workStart, workEnd } = getWorkRange(business, targetDayOfWeek);
 
   const { data: appointments } = await supabase
     .from("appointments")
@@ -60,83 +208,19 @@ export async function getAvailableSlots(
     .eq("appointment_date", date)
     .not("payment_status", "eq", "cancelled");
 
-  const buffer = 10;
   const occupied = (appointments ?? []).map((a: any) => ({
     start: timeToMinutes(a.start_time),
     end: timeToMinutes(a.end_time),
   }));
 
-  const periodRanges = {
-    morning: { start: workStart, end: Math.min(lunchStart, workEnd) },
-    afternoon: { start: lunchEnd, end: Math.min(timeToMinutes("18:00"), workEnd) },
-    evening: { start: timeToMinutes("18:00"), end: workEnd },
-  };
-
-  const rangeStart = period ? periodRanges[period].start : workStart;
-  const rangeEnd = period ? periodRanges[period].end : workEnd;
-
-  const slots: string[] = [];
-  let current = rangeStart;
-
-  while (current + durationMinutes <= rangeEnd) {
-    const slotEnd = current + durationMinutes;
-    const isLunch = current < lunchEnd && slotEnd > lunchStart;
-    const isOccupied = occupied.some(
-      (o) => current < o.end + buffer && slotEnd > o.start - buffer
-    );
-    if (!isLunch && !isOccupied) {
-      slots.push(minutesToTime(current));
-    }
-    current += 30;
-  }
+  const slots = buildRealAvailabilitySlots({
+    workStart,
+    workEnd,
+    durationMinutes,
+    period,
+    occupied,
+  });
 
   if (!bookingMode) return slots;
-
-  const [todayYear, todayMonth, todayDay] = todayBRT().split("-").map(Number);
-  const todayDateEpoch = Date.UTC(todayYear, todayMonth - 1, todayDay);
-  const [year, month, day] = date.split("-").map(Number);
-  const targetDateEpoch = Date.UTC(year, month - 1, day);
-  const daysAhead = Math.floor((targetDateEpoch - todayDateEpoch) / (1000 * 60 * 60 * 24));
-
-  let maxSlots: number;
-  if (daysAhead <= 7) maxSlots = 2;
-  else if (daysAhead <= 20) maxSlots = 3;
-  else maxSlots = 4;
-
-  if (slots.length <= maxSlots) return slots;
-
-  const dateSeed = year * 10000 + month * 100 + day;
-  const combinedSeed = ((sessionSeed ?? 0) + dateSeed) % 999983;
-
-  let s = combinedSeed === 0 ? 12345 : combinedSeed;
-  const rng = () => {
-    s = Math.imul(1664525, s) + 1013904223;
-    s = s >>> 0;
-    return s / 4294967296;
-  };
-
-  const arr = [...slots];
-  for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(rng() * (i + 1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
-  }
-
-  const morning = arr.filter((t) => parseInt(t.split(":")[0]) < 12);
-  const afternoon = arr.filter((t) => parseInt(t.split(":")[0]) >= 12);
-
-  const result: string[] = [];
-
-  if (morning.length > 0 && afternoon.length > 0) {
-    result.push(morning[0]);
-    result.push(afternoon[0]);
-    for (const slot of arr) {
-      if (result.length >= maxSlots) break;
-      if (!result.includes(slot)) result.push(slot);
-    }
-  } else {
-    result.push(...arr.slice(0, maxSlots));
-  }
-
-  result.sort();
-  return result;
+  return curateBookingSlots(slots, date, sessionSeed);
 }
