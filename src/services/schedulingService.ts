@@ -17,13 +17,16 @@ type ScheduleOverrideType =
   | "block_full_day"
   | "block_time_range"
   | "open_full_day"
-  | "open_time_range";
+  | "open_time_range"
+  | "personal_commitment";
 type ScheduleOverride = {
   id: string;
   business_id: string;
   date: string;
   start_time: string | null;
   end_time: string | null;
+  buffer_before_minutes?: number | null;
+  buffer_after_minutes?: number | null;
   type: ScheduleOverrideType;
 };
 
@@ -186,8 +189,20 @@ function hasFullDayBlock(overrides: ScheduleOverride[]) {
 
 function getBlockRanges(overrides: ScheduleOverride[]) {
   return overrides
-    .filter((override) => override.type === "block_time_range")
-    .map(getTimeRangeOverride)
+    .filter((override) => override.type === "block_time_range" || override.type === "personal_commitment")
+    .map((override) => {
+      const range = getTimeRangeOverride(override);
+      if (!range) return null;
+
+      if (override.type !== "personal_commitment") return range;
+
+      const bufferBefore = normalizeAppointmentBufferMinutes(override.buffer_before_minutes ?? 0);
+      const bufferAfter = normalizeAppointmentBufferMinutes(override.buffer_after_minutes ?? 0);
+      return {
+        start: range.start - bufferBefore,
+        end: range.end + bufferAfter,
+      };
+    })
     .filter((range): range is AvailabilityBlock => Boolean(range));
 }
 
@@ -349,7 +364,7 @@ export async function validateAppointmentSlot(
 
   const { data: overrides } = await supabase
     .from("schedule_overrides")
-    .select("id, business_id, date, start_time, end_time, type")
+    .select("id, business_id, date, start_time, end_time, type, buffer_before_minutes, buffer_after_minutes")
     .eq("business_id", businessId)
     .eq("date", date);
 
@@ -438,7 +453,7 @@ export async function getAvailableSlots(
   const appointmentBufferMinutes = getAppointmentBufferMinutes(business);
   const { data: overrides } = await supabase
     .from("schedule_overrides")
-    .select("id, business_id, date, start_time, end_time, type")
+    .select("id, business_id, date, start_time, end_time, type, buffer_before_minutes, buffer_after_minutes")
     .eq("business_id", businessId)
     .eq("date", date);
 

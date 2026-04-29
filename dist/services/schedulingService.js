@@ -138,8 +138,20 @@ function hasFullDayBlock(overrides) {
 }
 function getBlockRanges(overrides) {
     return overrides
-        .filter((override) => override.type === "block_time_range")
-        .map(getTimeRangeOverride)
+        .filter((override) => override.type === "block_time_range" || override.type === "personal_commitment")
+        .map((override) => {
+        const range = getTimeRangeOverride(override);
+        if (!range)
+            return null;
+        if (override.type !== "personal_commitment")
+            return range;
+        const bufferBefore = normalizeAppointmentBufferMinutes(override.buffer_before_minutes ?? 0);
+        const bufferAfter = normalizeAppointmentBufferMinutes(override.buffer_after_minutes ?? 0);
+        return {
+            start: range.start - bufferBefore,
+            end: range.end + bufferAfter,
+        };
+    })
         .filter((range) => Boolean(range));
 }
 function hasBlockConflict(start, end, blockRanges) {
@@ -252,7 +264,7 @@ async function validateAppointmentSlot(businessId, date, startTime, endTime, exc
     const buffer = getAppointmentBufferMinutes(business);
     const { data: overrides } = await supabase
         .from("schedule_overrides")
-        .select("id, business_id, date, start_time, end_time, type")
+        .select("id, business_id, date, start_time, end_time, type, buffer_before_minutes, buffer_after_minutes")
         .eq("business_id", businessId)
         .eq("date", date);
     const overridesList = (overrides ?? []);
@@ -315,7 +327,7 @@ async function getAvailableSlots(businessId, date, durationMinutes, period, book
     const appointmentBufferMinutes = getAppointmentBufferMinutes(business);
     const { data: overrides } = await supabase
         .from("schedule_overrides")
-        .select("id, business_id, date, start_time, end_time, type")
+        .select("id, business_id, date, start_time, end_time, type, buffer_before_minutes, buffer_after_minutes")
         .eq("business_id", businessId)
         .eq("date", date);
     let apptQuery = supabase
