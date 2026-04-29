@@ -15,6 +15,7 @@ const MAX_APPOINTMENT_BUFFER_MINUTES = 120;
 const SLOT_INTERVAL_MINUTES = 30;
 const AFTERNOON_START_TIME = "12:00";
 const EVENING_START_TIME = "18:00";
+const BRT_TIME_ZONE = "America/Sao_Paulo";
 function timeToMinutes(time) {
     const [h, m] = time.split(":").map(Number);
     return h * 60 + m;
@@ -23,6 +24,17 @@ function minutesToTime(minutes) {
     const h = Math.floor(minutes / 60);
     const m = minutes % 60;
     return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+function currentBRTMinutes() {
+    const parts = new Intl.DateTimeFormat("en-US", {
+        timeZone: BRT_TIME_ZONE,
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23",
+    }).formatToParts(new Date());
+    const hour = Number(parts.find((part) => part.type === "hour")?.value ?? 0);
+    const minute = Number(parts.find((part) => part.type === "minute")?.value ?? 0);
+    return hour * 60 + minute;
 }
 function isValidTime(time) {
     if (typeof time !== "string")
@@ -160,6 +172,13 @@ function hasBlockConflict(start, end, blockRanges) {
 function dedupeAndSortSlots(slots) {
     return [...new Set(slots)].sort();
 }
+function isWithinBlock(start, end, block) {
+    return start >= block.start && end <= block.end;
+}
+function addCandidate(candidates, start) {
+    if (Number.isFinite(start))
+        candidates.add(Math.floor(start));
+}
 function hasOccupiedConflict(start, end, occupied, buffer) {
     return occupied.some((slot) => start < slot.end + buffer && end > slot.start - buffer);
 }
@@ -176,15 +195,28 @@ function buildRealAvailabilitySlots(params) {
     const slots = [];
     // Disponibilidade real: expediente, almoço configurado, duração, appointments e buffer.
     for (const block of blocks) {
-        let current = block.start;
-        while (current + params.durationMinutes <= block.end) {
+        const candidates = new Set();
+        for (let current = block.start; current + params.durationMinutes <= block.end; current += SLOT_INTERVAL_MINUTES) {
+            addCandidate(candidates, current);
+        }
+        addCandidate(candidates, block.end - params.durationMinutes);
+        for (const blocked of blockRanges) {
+            addCandidate(candidates, blocked.start - params.durationMinutes);
+            addCandidate(candidates, blocked.end);
+        }
+        for (const occupied of params.occupied) {
+            addCandidate(candidates, occupied.start - params.appointmentBufferMinutes - params.durationMinutes);
+            addCandidate(candidates, occupied.end + params.appointmentBufferMinutes);
+        }
+        for (const current of candidates) {
             const slotEnd = current + params.durationMinutes;
+            if (!isWithinBlock(current, slotEnd, block))
+                continue;
             const isOccupied = hasOccupiedConflict(current, slotEnd, params.occupied, params.appointmentBufferMinutes);
             const isBlocked = hasBlockConflict(current, slotEnd, blockRanges);
             if (!isOccupied && !isBlocked) {
                 slots.push(minutesToTime(current));
             }
-            current += SLOT_INTERVAL_MINUTES;
         }
     }
     return dedupeAndSortSlots(slots);
@@ -357,5 +389,8 @@ async function getAvailableSlots(businessId, date, durationMinutes, period, book
     });
     if (!bookingMode)
         return slots;
-    return curateBookingSlots(slots, date, sessionSeed);
+    const publicSlots = date === (0, date_1.todayBRT)()
+        ? slots.filter((slot) => timeToMinutes(slot) >= currentBRTMinutes())
+        : slots;
+    return curateBookingSlots(publicSlots, date, sessionSeed);
 }

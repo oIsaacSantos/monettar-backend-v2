@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import { createClient } from "@supabase/supabase-js";
 import { todayBRT } from "../utils/date";
+import { validateAppointmentSlot } from "../services/schedulingService";
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -223,6 +224,12 @@ bookingRouter.post("/:slug/appointment", async (req: Request, res: Response) => 
     const [h, m] = startTime.split(":").map(Number);
     const endDate = new Date(2000, 0, 1, h, m + duration);
     const endTime = `${String(endDate.getHours()).padStart(2, "0")}:${String(endDate.getMinutes()).padStart(2, "0")}`;
+
+    const validation = await validateAppointmentSlot(business.id, date, startTime, endTime);
+    if (!validation.valid) {
+      res.status(409).json({ error: validation.reason ?? "Este horÃ¡rio jÃ¡ estÃ¡ ocupado. Por favor escolha outro." });
+      return;
+    }
 
     const { data: conflictingAppointments, error: conflictError } = await supabase
       .from("appointments")

@@ -40,6 +40,7 @@ exports.bookingRouter = void 0;
 const express_1 = require("express");
 const supabase_js_1 = require("@supabase/supabase-js");
 const date_1 = require("../utils/date");
+const schedulingService_1 = require("../services/schedulingService");
 const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
 const supabase = (0, supabase_js_1.createClient)(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
@@ -277,6 +278,11 @@ exports.bookingRouter.post("/:slug/appointment", async (req, res) => {
         const [h, m] = startTime.split(":").map(Number);
         const endDate = new Date(2000, 0, 1, h, m + duration);
         const endTime = `${String(endDate.getHours()).padStart(2, "0")}:${String(endDate.getMinutes()).padStart(2, "0")}`;
+        const validation = await (0, schedulingService_1.validateAppointmentSlot)(business.id, date, startTime, endTime);
+        if (!validation.valid) {
+            res.status(409).json({ error: validation.reason ?? "Este horÃ¡rio jÃ¡ estÃ¡ ocupado. Por favor escolha outro." });
+            return;
+        }
         const { data: conflictingAppointments, error: conflictError } = await supabase
             .from("appointments")
             .select("id")
