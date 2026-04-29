@@ -15,6 +15,7 @@ type LunchBreak = { start: number; end: number };
 type AvailabilityBlock = { start: number; end: number };
 
 const DEFAULT_APPOINTMENT_BUFFER_MINUTES = 10;
+const MAX_APPOINTMENT_BUFFER_MINUTES = 120;
 const SLOT_INTERVAL_MINUTES = 30;
 const AFTERNOON_START_TIME = "12:00";
 const EVENING_START_TIME = "18:00";
@@ -99,11 +100,21 @@ function getLunchBreak(business: any): LunchBreak | undefined {
   return { start, end };
 }
 
-function getAppointmentBufferMinutes(business: any) {
-  const buffer = Number(business?.appointment_buffer_minutes);
-  if (!Number.isFinite(buffer) || buffer < 0) return DEFAULT_APPOINTMENT_BUFFER_MINUTES;
+function normalizeAppointmentBufferMinutes(value: unknown): number {
+  if (value === null || value === undefined || value === "") {
+    return DEFAULT_APPOINTMENT_BUFFER_MINUTES;
+  }
+
+  const buffer = Number(value);
+  if (!Number.isFinite(buffer)) return DEFAULT_APPOINTMENT_BUFFER_MINUTES;
+  if (buffer < 0) return 0;
+  if (buffer > MAX_APPOINTMENT_BUFFER_MINUTES) return MAX_APPOINTMENT_BUFFER_MINUTES;
 
   return Math.floor(buffer);
+}
+
+function getAppointmentBufferMinutes(business: any) {
+  return normalizeAppointmentBufferMinutes(business?.appointment_buffer_minutes);
 }
 
 function buildAvailabilityBlocks(range: AvailabilityBlock, lunchBreak?: LunchBreak) {

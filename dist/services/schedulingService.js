@@ -10,6 +10,7 @@ const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
 const supabase = (0, supabase_js_1.createClient)(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 const DEFAULT_APPOINTMENT_BUFFER_MINUTES = 10;
+const MAX_APPOINTMENT_BUFFER_MINUTES = 120;
 const SLOT_INTERVAL_MINUTES = 30;
 const AFTERNOON_START_TIME = "12:00";
 const EVENING_START_TIME = "18:00";
@@ -75,11 +76,21 @@ function getLunchBreak(business) {
     }
     return { start, end };
 }
-function getAppointmentBufferMinutes(business) {
-    const buffer = Number(business?.appointment_buffer_minutes);
-    if (!Number.isFinite(buffer) || buffer < 0)
+function normalizeAppointmentBufferMinutes(value) {
+    if (value === null || value === undefined || value === "") {
         return DEFAULT_APPOINTMENT_BUFFER_MINUTES;
+    }
+    const buffer = Number(value);
+    if (!Number.isFinite(buffer))
+        return DEFAULT_APPOINTMENT_BUFFER_MINUTES;
+    if (buffer < 0)
+        return 0;
+    if (buffer > MAX_APPOINTMENT_BUFFER_MINUTES)
+        return MAX_APPOINTMENT_BUFFER_MINUTES;
     return Math.floor(buffer);
+}
+function getAppointmentBufferMinutes(business) {
+    return normalizeAppointmentBufferMinutes(business?.appointment_buffer_minutes);
 }
 function buildAvailabilityBlocks(range, lunchBreak) {
     if (!lunchBreak)
