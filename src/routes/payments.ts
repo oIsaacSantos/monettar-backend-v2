@@ -1,5 +1,6 @@
 import { Router, Request, Response } from "express";
 import { createClient } from "@supabase/supabase-js";
+import { createHmac, timingSafeEqual } from "crypto";
 import { createPixPayment, getPaymentStatus } from "../services/paymentService";
 import { sendPushToBusiness } from "../services/notificationService";
 import dotenv from "dotenv";
@@ -7,6 +8,66 @@ dotenv.config();
 
 const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 export const paymentsRouter = Router();
+
+function getHeaderValue(req: Request, name: string) {
+  const value = req.headers[name.toLowerCase()];
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function parseMercadoPagoSignature(signature: string) {
+  return signature.split(",").reduce<{ ts?: string; v1?: string }>((acc, part) => {
+    const [key, value] = part.split("=");
+    if (key?.trim() === "ts") acc.ts = value?.trim();
+    if (key?.trim() === "v1") acc.v1 = value?.trim();
+    return acc;
+  }, {});
+}
+
+function getWebhookDataId(req: Request) {
+  const queryDataId = req.query["data.id"];
+  const dataId = Array.isArray(queryDataId) ? queryDataId[0] : queryDataId;
+  const fallbackDataId = req.body?.data?.id;
+  const value = String(dataId ?? fallbackDataId ?? "");
+
+  return /^[a-z0-9]+$/i.test(value) ? value.toLowerCase() : value;
+}
+
+function isMercadoPagoWebhookSignatureValid(req: Request) {
+  const secret = process.env.MP_WEBHOOK_SECRET;
+  if (!secret) {
+    console.warn("[mp-webhook] MP_WEBHOOK_SECRET nao configurado; pulando validacao de assinatura.");
+    return true;
+  }
+
+  const xSignature = getHeaderValue(req, "x-signature");
+  const xRequestId = getHeaderValue(req, "x-request-id");
+
+  if (!xSignature || !xRequestId) {
+    console.warn("[mp-webhook] assinatura ausente: x-signature ou x-request-id nao informado.");
+    return false;
+  }
+
+  const { ts, v1 } = parseMercadoPagoSignature(xSignature);
+  if (!ts || !v1) {
+    console.warn("[mp-webhook] assinatura invalida: ts ou v1 ausente.");
+    return false;
+  }
+
+  const manifest = `id:${getWebhookDataId(req)};request-id:${xRequestId};ts:${ts};`;
+  const expectedSignature = createHmac("sha256", secret).update(manifest).digest("hex");
+
+  try {
+    const expectedBuffer = Buffer.from(expectedSignature, "hex");
+    const receivedBuffer = Buffer.from(v1, "hex");
+
+    return (
+      expectedBuffer.length === receivedBuffer.length &&
+      timingSafeEqual(expectedBuffer, receivedBuffer)
+    );
+  } catch {
+    return false;
+  }
+}
 
 async function notifyPaidAppointment(appointmentId: string) {
   console.log("[push-confirmed] appointment id:", appointmentId);
@@ -44,10 +105,10 @@ async function notifyPaidAppointment(appointmentId: string) {
       url: "/agenda",
     });
 
-    if (result.sent === 1) {
+    if (result.sent >= 1) {
       console.log("[push-confirmed] sent ok");
     } else {
-      console.error("[push-confirmed] error:", result.error ?? "push not sent");
+      console.error("[push-confirmed] error:", result.errors ?? "push not sent");
     }
   } catch (err: any) {
     console.error("[push-confirmed] error:", err?.message ?? err);
@@ -135,6 +196,11 @@ paymentsRouter.get("/status/:paymentId", async (req: Request, res: Response) => 
 
 // Webhook do Mercado Pago
 paymentsRouter.post("/webhook", async (req: Request, res: Response) => {
+  if (!isMercadoPagoWebhookSignatureValid(req)) {
+    res.sendStatus(401);
+    return;
+  }
+
   const { type, data } = req.body;
 
   if (type === "payment" && data?.id) {
