@@ -10,10 +10,33 @@ exports.reorderServices = reorderServices;
 const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
 const supabase_js_1 = require("@supabase/supabase-js");
+const suppliesService_1 = require("./suppliesService");
 const supabase = (0, supabase_js_1.createClient)(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 function normalizeDescription(description) {
     const trimmed = description?.trim();
     return trimmed ? trimmed : null;
+}
+async function attachSupplyCosts(businessId, services) {
+    return Promise.all(services.map(async (service) => {
+        try {
+            const calculated = await (0, suppliesService_1.calculateServiceSupplyCost)(service.id, businessId);
+            return {
+                ...service,
+                calculated_material_cost: calculated.cost,
+                material_cost_source: calculated.source,
+                supply_cost_breakdown: calculated.breakdown,
+            };
+        }
+        catch (err) {
+            console.warn("[services] erro ao calcular custo por insumos:", err?.message ?? err);
+            return {
+                ...service,
+                calculated_material_cost: Number(service.material_cost_estimate ?? 0),
+                material_cost_source: "material_cost_estimate",
+                supply_cost_breakdown: [],
+            };
+        }
+    }));
 }
 async function getServices(businessId) {
     const result = await supabase
@@ -31,12 +54,12 @@ async function getServices(businessId) {
             .order("name", { ascending: true });
         if (fallback.error)
             throw new Error(fallback.error.message);
-        return fallback.data ?? [];
+        return attachSupplyCosts(businessId, fallback.data ?? []);
     }
     const { data, error } = result;
     if (error)
         throw new Error(error.message);
-    return data ?? [];
+    return attachSupplyCosts(businessId, data ?? []);
 }
 async function createService(businessId, payload) {
     const { data: lastService, error: lastServiceError } = await supabase

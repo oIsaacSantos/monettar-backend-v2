@@ -2,6 +2,7 @@ import dotenv from "dotenv";
 dotenv.config();
 
 import { createClient } from "@supabase/supabase-js";
+import { calculateServiceSupplyCost } from "./suppliesService";
 
 const supabase = createClient(
   process.env.SUPABASE_URL!,
@@ -11,6 +12,30 @@ const supabase = createClient(
 function normalizeDescription(description?: string | null) {
   const trimmed = description?.trim();
   return trimmed ? trimmed : null;
+}
+
+async function attachSupplyCosts(businessId: string, services: any[]) {
+  return Promise.all(
+    services.map(async (service) => {
+      try {
+        const calculated = await calculateServiceSupplyCost(service.id, businessId);
+        return {
+          ...service,
+          calculated_material_cost: calculated.cost,
+          material_cost_source: calculated.source,
+          supply_cost_breakdown: calculated.breakdown,
+        };
+      } catch (err: any) {
+        console.warn("[services] erro ao calcular custo por insumos:", err?.message ?? err);
+        return {
+          ...service,
+          calculated_material_cost: Number(service.material_cost_estimate ?? 0),
+          material_cost_source: "material_cost_estimate",
+          supply_cost_breakdown: [],
+        };
+      }
+    })
+  );
 }
 
 export async function getServices(businessId: string) {
@@ -30,12 +55,12 @@ export async function getServices(businessId: string) {
       .order("name", { ascending: true });
 
     if (fallback.error) throw new Error(fallback.error.message);
-    return fallback.data ?? [];
+    return attachSupplyCosts(businessId, fallback.data ?? []);
   }
 
   const { data, error } = result;
   if (error) throw new Error(error.message);
-  return data ?? [];
+  return attachSupplyCosts(businessId, data ?? []);
 }
 
 export async function createService(businessId: string, payload: {

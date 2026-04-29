@@ -3,6 +3,7 @@ dotenv.config();
 
 import { createClient } from "@supabase/supabase-js";
 import { currentMonthBRT, todayBRT } from "../utils/date";
+import { calculateServiceSupplyCost } from "./suppliesService";
 
 const supabase = createClient(
   process.env.SUPABASE_URL!,
@@ -62,6 +63,7 @@ export async function getDashboardSummary(businessId: string) {
   let todayAppointments = 0;
   let monthRevenue = 0;
   let monthAppointments = 0;
+  const serviceCostCache = new Map<string, number>();
 
   const serviceMap = new Map<string, {
     serviceId: string | null;
@@ -74,9 +76,22 @@ export async function getDashboardSummary(businessId: string) {
   for (const a of appointments ?? []) {
     const revenue = Number(a.charged_amount ?? 0) - Number(a.discount ?? 0);
     const svc = Array.isArray(a.services) ? a.services[0] : (a.services as any);
-    const material = Number(svc?.material_cost_estimate ?? 0);
+    let material = Number(svc?.material_cost_estimate ?? 0);
     const svcId = (a.service_id as string) ?? null;
     const svcName = svc?.name ?? "Sem serviço";
+
+    if (svcId) {
+      if (!serviceCostCache.has(svcId)) {
+        try {
+          const calculated = await calculateServiceSupplyCost(svcId, businessId);
+          serviceCostCache.set(svcId, calculated.cost);
+        } catch (err: any) {
+          console.warn("[dashboard] erro ao calcular custo por insumos:", err?.message ?? err);
+          serviceCostCache.set(svcId, material);
+        }
+      }
+      material = serviceCostCache.get(svcId) ?? material;
+    }
 
     totalRevenue += revenue;
     totalMaterial += material;

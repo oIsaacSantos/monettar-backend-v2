@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.servicesRouter = void 0;
 const express_1 = require("express");
 const servicesService_1 = require("../services/servicesService");
+const suppliesService_1 = require("../services/suppliesService");
 exports.servicesRouter = (0, express_1.Router)();
 exports.servicesRouter.get("/", async (req, res) => {
     const { businessId } = req.query;
@@ -56,6 +57,34 @@ exports.servicesRouter.put("/:id", async (req, res) => {
     }
     try {
         res.json(await (0, servicesService_1.updateService)(id, businessId, req.body));
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+exports.servicesRouter.get("/:serviceId/supplies", async (req, res) => {
+    const { businessId } = req.query;
+    const { serviceId } = req.params;
+    if (!businessId) {
+        res.status(400).json({ error: "businessId obrigatorio" });
+        return;
+    }
+    try {
+        res.json(await (0, suppliesService_1.getServiceSupplies)(serviceId, businessId));
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+exports.servicesRouter.post("/:serviceId/supplies", async (req, res) => {
+    const { serviceId } = req.params;
+    const { businessId, supplyId, quantityUsed } = req.body;
+    if (!businessId || !supplyId) {
+        res.status(400).json({ error: "businessId e supplyId obrigatorios" });
+        return;
+    }
+    try {
+        res.status(201).json(await (0, suppliesService_1.addServiceSupply)(serviceId, businessId, { supplyId, quantityUsed }));
     }
     catch (err) {
         res.status(500).json({ error: err.message });

@@ -21,6 +21,8 @@ const bookingLeads_1 = require("./routes/bookingLeads");
 const packages_1 = require("./routes/packages");
 const cron_1 = require("./routes/cron");
 const scheduleOverrides_1 = require("./routes/scheduleOverrides");
+const supplies_1 = require("./routes/supplies");
+const serviceSupplies_1 = require("./routes/serviceSupplies");
 const auth_2 = require("./middleware/auth");
 dotenv_1.default.config({ path: path_1.default.resolve(__dirname, "../.env") });
 const app = (0, express_1.default)();
@@ -42,6 +44,8 @@ app.use("/api/appointments", auth_2.requireBusinessAccess, appointments_1.appoin
 app.use("/api/clients", auth_2.requireBusinessAccess, clients_1.clientsRouter);
 app.use("/api/services", auth_2.requireBusinessAccess, services_1.servicesRouter);
 app.use("/api/fixed-costs", auth_2.requireBusinessAccess, fixedCosts_1.fixedCostsRouter);
+app.use("/api/supplies", auth_2.requireBusinessAccess, supplies_1.suppliesRouter);
+app.use("/api/service-supplies", auth_2.requireBusinessAccess, serviceSupplies_1.serviceSuppliesRouter);
 app.use("/api/business", auth_2.requireBusinessAccess, business_1.businessRouter);
 app.use("/api/schedule-overrides", auth_2.requireBusinessAccess, scheduleOverrides_1.scheduleOverridesRouter);
 app.use("/api/booking", publicBookingRateLimit, booking_1.bookingRouter);

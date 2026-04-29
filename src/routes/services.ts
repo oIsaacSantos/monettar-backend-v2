@@ -1,5 +1,6 @@
 import { Router, Request, Response } from "express";
 import { createService, getServices, reorderServices, updateService } from "../services/servicesService";
+import { addServiceSupply, getServiceSupplies } from "../services/suppliesService";
 
 export const servicesRouter = Router();
 
@@ -34,5 +35,26 @@ servicesRouter.put("/:id", async (req: Request, res: Response) => {
   if (!businessId) { res.status(400).json({ error: "businessId obrigatorio" }); return; }
   try {
     res.json(await updateService(id, businessId as string, req.body));
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+servicesRouter.get("/:serviceId/supplies", async (req: Request, res: Response) => {
+  const { businessId } = req.query;
+  const { serviceId } = req.params;
+  if (!businessId) { res.status(400).json({ error: "businessId obrigatorio" }); return; }
+  try {
+    res.json(await getServiceSupplies(serviceId, businessId as string));
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+servicesRouter.post("/:serviceId/supplies", async (req: Request, res: Response) => {
+  const { serviceId } = req.params;
+  const { businessId, supplyId, quantityUsed } = req.body;
+  if (!businessId || !supplyId) {
+    res.status(400).json({ error: "businessId e supplyId obrigatorios" });
+    return;
+  }
+  try {
+    res.status(201).json(await addServiceSupply(serviceId, businessId, { supplyId, quantityUsed }));
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
