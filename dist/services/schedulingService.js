@@ -11,8 +11,7 @@ dotenv_1.default.config();
 const supabase = (0, supabase_js_1.createClient)(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 const BOOKING_BUFFER_MINUTES = 10;
 const SLOT_INTERVAL_MINUTES = 30;
-const LUNCH_START_TIME = "12:00";
-const LUNCH_END_TIME = "13:00";
+const AFTERNOON_START_TIME = "12:00";
 const EVENING_START_TIME = "18:00";
 function timeToMinutes(time) {
     const [h, m] = time.split(":").map(Number);
@@ -22,6 +21,16 @@ function minutesToTime(minutes) {
     const h = Math.floor(minutes / 60);
     const m = minutes % 60;
     return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+function isValidTime(time) {
+    if (typeof time !== "string")
+        return false;
+    const match = time.match(/^(\d{2}):(\d{2})(?::\d{2})?$/);
+    if (!match)
+        return false;
+    const hours = Number(match[1]);
+    const minutes = Number(match[2]);
+    return hours >= 0 && hours <= 23 && minutes >= 0 && minutes <= 59;
 }
 function getTargetDayOfWeek(date) {
     return new Date(date + "T12:00:00Z").getUTCDay();
@@ -36,32 +45,62 @@ function getWorkRange(business, targetDayOfWeek) {
         workEnd: timeToMinutes(dayEnd),
     };
 }
-function getPeriodRange(period, workStart, workEnd, lunchStart, lunchEnd) {
+function getPeriodRange(period, workStart, workEnd, lunchBreak) {
+    const afternoonStart = lunchBreak?.end ?? timeToMinutes(AFTERNOON_START_TIME);
     const periodRanges = {
-        morning: { start: workStart, end: Math.min(lunchStart, workEnd) },
-        afternoon: { start: lunchEnd, end: Math.min(timeToMinutes(EVENING_START_TIME), workEnd) },
+        morning: { start: workStart, end: Math.min(lunchBreak?.start ?? timeToMinutes(AFTERNOON_START_TIME), workEnd) },
+        afternoon: { start: Math.max(afternoonStart, workStart), end: Math.min(timeToMinutes(EVENING_START_TIME), workEnd) },
         evening: { start: timeToMinutes(EVENING_START_TIME), end: workEnd },
     };
     return period ? periodRanges[period] : { start: workStart, end: workEnd };
+}
+function getLunchBreak(business) {
+    if (!business?.lunch_break_active)
+        return undefined;
+    if (!isValidTime(business.lunch_start_time) || !isValidTime(business.lunch_end_time)) {
+        console.warn("[scheduling] lunch_break_active sem horários válidos; almoço ignorado com segurança", {
+            lunch_start_time: business?.lunch_start_time,
+            lunch_end_time: business?.lunch_end_time,
+        });
+        return undefined;
+    }
+    const start = timeToMinutes(business.lunch_start_time);
+    const end = timeToMinutes(business.lunch_end_time);
+    if (end <= start) {
+        console.warn("[scheduling] intervalo de almoço inválido; almoço ignorado com segurança", {
+            lunch_start_time: business.lunch_start_time,
+            lunch_end_time: business.lunch_end_time,
+        });
+        return undefined;
+    }
+    return { start, end };
+}
+function buildAvailabilityBlocks(range, lunchBreak) {
+    if (!lunchBreak)
+        return [range];
+    return [
+        { start: range.start, end: Math.min(lunchBreak.start, range.end) },
+        { start: Math.max(lunchBreak.end, range.start), end: range.end },
+    ].filter((block) => block.start < block.end);
 }
 function hasOccupiedConflict(start, end, occupied, buffer) {
     return occupied.some((slot) => start < slot.end + buffer && end > slot.start - buffer);
 }
 function buildRealAvailabilitySlots(params) {
-    const lunchStart = timeToMinutes(LUNCH_START_TIME);
-    const lunchEnd = timeToMinutes(LUNCH_END_TIME);
-    const range = getPeriodRange(params.period, params.workStart, params.workEnd, lunchStart, lunchEnd);
+    const range = getPeriodRange(params.period, params.workStart, params.workEnd, params.lunchBreak);
+    const blocks = buildAvailabilityBlocks(range, params.lunchBreak);
     const slots = [];
-    let current = range.start;
-    // Disponibilidade real: expediente, almoco fixo atual, duracao, appointments e buffer.
-    while (current + params.durationMinutes <= range.end) {
-        const slotEnd = current + params.durationMinutes;
-        const isLunch = current < lunchEnd && slotEnd > lunchStart;
-        const isOccupied = hasOccupiedConflict(current, slotEnd, params.occupied, BOOKING_BUFFER_MINUTES);
-        if (!isLunch && !isOccupied) {
-            slots.push(minutesToTime(current));
+    // Disponibilidade real: expediente, almoço configurado, duração, appointments e buffer.
+    for (const block of blocks) {
+        let current = block.start;
+        while (current + params.durationMinutes <= block.end) {
+            const slotEnd = current + params.durationMinutes;
+            const isOccupied = hasOccupiedConflict(current, slotEnd, params.occupied, BOOKING_BUFFER_MINUTES);
+            if (!isOccupied) {
+                slots.push(minutesToTime(current));
+            }
+            current += SLOT_INTERVAL_MINUTES;
         }
-        current += SLOT_INTERVAL_MINUTES;
     }
     return slots;
 }
@@ -125,7 +164,7 @@ function curateBookingSlots(slots, date, sessionSeed) {
 async function getAvailableSlots(businessId, date, durationMinutes, period, bookingMode = false, sessionSeed) {
     const { data: business } = await supabase
         .from("businesses")
-        .select("work_start_time, work_end_time, work_days_of_week, work_hours_by_day")
+        .select("work_start_time, work_end_time, work_days_of_week, work_hours_by_day, lunch_break_active, lunch_start_time, lunch_end_time")
         .eq("id", businessId)
         .single();
     const workDays = business?.work_days_of_week ?? [1, 2, 3, 4, 5, 6];
@@ -138,6 +177,7 @@ async function getAvailableSlots(businessId, date, durationMinutes, period, book
         return [];
     }
     const { workStart, workEnd } = getWorkRange(business, targetDayOfWeek);
+    const lunchBreak = getLunchBreak(business);
     const { data: appointments } = await supabase
         .from("appointments")
         .select("start_time, end_time")
@@ -154,6 +194,7 @@ async function getAvailableSlots(businessId, date, durationMinutes, period, book
         durationMinutes,
         period,
         occupied,
+        lunchBreak,
     });
     if (!bookingMode)
         return slots;
