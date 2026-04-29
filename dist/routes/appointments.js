@@ -39,8 +39,10 @@ exports.appointmentsRouter.get("/all", async (req, res) => {
         res.status(400).json({ error: "businessId obrigatório" });
         return;
     }
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const limit = Math.min(Math.max(1, Number(req.query.limit) || 50), 100);
     try {
-        res.json(await (0, appointmentsService_1.getAllAppointments)(businessId));
+        res.json(await (0, appointmentsService_1.getAllAppointments)(businessId, page, limit));
     }
     catch (err) {
         res.status(500).json({ error: err.message });

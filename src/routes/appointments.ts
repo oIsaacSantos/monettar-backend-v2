@@ -29,8 +29,10 @@ appointmentsRouter.delete("/:id", async (req: Request, res: Response) => {
 appointmentsRouter.get("/all", async (req: Request, res: Response) => {
   const { businessId } = req.query;
   if (!businessId) { res.status(400).json({ error: "businessId obrigatório" }); return; }
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const limit = Math.min(Math.max(1, Number(req.query.limit) || 50), 100);
   try {
-    res.json(await getAllAppointments(businessId as string));
+    res.json(await getAllAppointments(businessId as string, page, limit));
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

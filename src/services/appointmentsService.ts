@@ -50,8 +50,11 @@ export async function deleteAppointment(id: string, businessId: string) {
   return { success: true };
 }
 
-export async function getAllAppointments(businessId: string) {
-  const { data, error } = await supabase
+export async function getAllAppointments(businessId: string, page: number, limit: number) {
+  const from = (page - 1) * limit;
+  const to = from + limit - 1;
+
+  const { data, error, count } = await supabase
     .from("appointments")
     .select(`
       id,
@@ -64,16 +67,24 @@ export async function getAllAppointments(businessId: string) {
       notes,
       clients(id, name, phone),
       services(id, name, duration_minutes)
-    `)
+    `, { count: "exact" })
     .eq("business_id", businessId)
     .order("appointment_date", { ascending: false })
-    .order("start_time", { ascending: false });
+    .order("start_time", { ascending: false })
+    .range(from, to);
   if (error) throw new Error(error.message);
-  return (data ?? []).map((a: any) => ({
+  const appointments = (data ?? []).map((a: any) => ({
     ...a,
     clients: Array.isArray(a.clients) ? (a.clients[0] ?? null) : a.clients,
     services: Array.isArray(a.services) ? (a.services[0] ?? null) : a.services,
   }));
+
+  return {
+    data: appointments,
+    total: count ?? 0,
+    page,
+    limit,
+  };
 }
 
 export async function getAppointmentsByMonth(businessId: string, year: number, month: number) {

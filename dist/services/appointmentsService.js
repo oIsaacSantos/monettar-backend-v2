@@ -42,8 +42,10 @@ async function deleteAppointment(id, businessId) {
         throw new Error(error.message);
     return { success: true };
 }
-async function getAllAppointments(businessId) {
-    const { data, error } = await supabase
+async function getAllAppointments(businessId, page, limit) {
+    const from = (page - 1) * limit;
+    const to = from + limit - 1;
+    const { data, error, count } = await supabase
         .from("appointments")
         .select(`
       id,
@@ -56,17 +58,24 @@ async function getAllAppointments(businessId) {
       notes,
       clients(id, name, phone),
       services(id, name, duration_minutes)
-    `)
+    `, { count: "exact" })
         .eq("business_id", businessId)
         .order("appointment_date", { ascending: false })
-        .order("start_time", { ascending: false });
+        .order("start_time", { ascending: false })
+        .range(from, to);
     if (error)
         throw new Error(error.message);
-    return (data ?? []).map((a) => ({
+    const appointments = (data ?? []).map((a) => ({
         ...a,
         clients: Array.isArray(a.clients) ? (a.clients[0] ?? null) : a.clients,
         services: Array.isArray(a.services) ? (a.services[0] ?? null) : a.services,
     }));
+    return {
+        data: appointments,
+        total: count ?? 0,
+        page,
+        limit,
+    };
 }
 async function getAppointmentsByMonth(businessId, year, month) {
     const start = `${year}-${String(month).padStart(2, "0")}-01`;
