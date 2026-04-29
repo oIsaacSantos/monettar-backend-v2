@@ -9,7 +9,7 @@ const date_1 = require("../utils/date");
 const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
 const supabase = (0, supabase_js_1.createClient)(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
-const BOOKING_BUFFER_MINUTES = 10;
+const DEFAULT_APPOINTMENT_BUFFER_MINUTES = 10;
 const SLOT_INTERVAL_MINUTES = 30;
 const AFTERNOON_START_TIME = "12:00";
 const EVENING_START_TIME = "18:00";
@@ -75,6 +75,12 @@ function getLunchBreak(business) {
     }
     return { start, end };
 }
+function getAppointmentBufferMinutes(business) {
+    const buffer = Number(business?.appointment_buffer_minutes);
+    if (!Number.isFinite(buffer) || buffer < 0)
+        return DEFAULT_APPOINTMENT_BUFFER_MINUTES;
+    return Math.floor(buffer);
+}
 function buildAvailabilityBlocks(range, lunchBreak) {
     if (!lunchBreak)
         return [range];
@@ -95,7 +101,7 @@ function buildRealAvailabilitySlots(params) {
         let current = block.start;
         while (current + params.durationMinutes <= block.end) {
             const slotEnd = current + params.durationMinutes;
-            const isOccupied = hasOccupiedConflict(current, slotEnd, params.occupied, BOOKING_BUFFER_MINUTES);
+            const isOccupied = hasOccupiedConflict(current, slotEnd, params.occupied, params.appointmentBufferMinutes);
             if (!isOccupied) {
                 slots.push(minutesToTime(current));
             }
@@ -164,7 +170,7 @@ function curateBookingSlots(slots, date, sessionSeed) {
 async function getAvailableSlots(businessId, date, durationMinutes, period, bookingMode = false, sessionSeed) {
     const { data: business } = await supabase
         .from("businesses")
-        .select("work_start_time, work_end_time, work_days_of_week, work_hours_by_day, lunch_break_active, lunch_start_time, lunch_end_time")
+        .select("work_start_time, work_end_time, work_days_of_week, work_hours_by_day, lunch_break_active, lunch_start_time, lunch_end_time, appointment_buffer_minutes")
         .eq("id", businessId)
         .single();
     const workDays = business?.work_days_of_week ?? [1, 2, 3, 4, 5, 6];
@@ -178,6 +184,7 @@ async function getAvailableSlots(businessId, date, durationMinutes, period, book
     }
     const { workStart, workEnd } = getWorkRange(business, targetDayOfWeek);
     const lunchBreak = getLunchBreak(business);
+    const appointmentBufferMinutes = getAppointmentBufferMinutes(business);
     const { data: appointments } = await supabase
         .from("appointments")
         .select("start_time, end_time")
@@ -195,6 +202,7 @@ async function getAvailableSlots(businessId, date, durationMinutes, period, book
         period,
         occupied,
         lunchBreak,
+        appointmentBufferMinutes,
     });
     if (!bookingMode)
         return slots;

@@ -14,7 +14,7 @@ type OccupiedSlot = { start: number; end: number };
 type LunchBreak = { start: number; end: number };
 type AvailabilityBlock = { start: number; end: number };
 
-const BOOKING_BUFFER_MINUTES = 10;
+const DEFAULT_APPOINTMENT_BUFFER_MINUTES = 10;
 const SLOT_INTERVAL_MINUTES = 30;
 const AFTERNOON_START_TIME = "12:00";
 const EVENING_START_TIME = "18:00";
@@ -99,6 +99,13 @@ function getLunchBreak(business: any): LunchBreak | undefined {
   return { start, end };
 }
 
+function getAppointmentBufferMinutes(business: any) {
+  const buffer = Number(business?.appointment_buffer_minutes);
+  if (!Number.isFinite(buffer) || buffer < 0) return DEFAULT_APPOINTMENT_BUFFER_MINUTES;
+
+  return Math.floor(buffer);
+}
+
 function buildAvailabilityBlocks(range: AvailabilityBlock, lunchBreak?: LunchBreak) {
   if (!lunchBreak) return [range];
 
@@ -124,6 +131,7 @@ function buildRealAvailabilitySlots(params: {
   period?: Period;
   occupied: OccupiedSlot[];
   lunchBreak?: LunchBreak;
+  appointmentBufferMinutes: number;
 }) {
   const range = getPeriodRange(
     params.period,
@@ -143,7 +151,7 @@ function buildRealAvailabilitySlots(params: {
         current,
         slotEnd,
         params.occupied,
-        BOOKING_BUFFER_MINUTES
+        params.appointmentBufferMinutes
       );
 
       if (!isOccupied) {
@@ -229,7 +237,7 @@ export async function getAvailableSlots(
 ) {
   const { data: business } = await supabase
     .from("businesses")
-    .select("work_start_time, work_end_time, work_days_of_week, work_hours_by_day, lunch_break_active, lunch_start_time, lunch_end_time")
+    .select("work_start_time, work_end_time, work_days_of_week, work_hours_by_day, lunch_break_active, lunch_start_time, lunch_end_time, appointment_buffer_minutes")
     .eq("id", businessId)
     .single();
 
@@ -245,6 +253,7 @@ export async function getAvailableSlots(
 
   const { workStart, workEnd } = getWorkRange(business, targetDayOfWeek);
   const lunchBreak = getLunchBreak(business);
+  const appointmentBufferMinutes = getAppointmentBufferMinutes(business);
 
   const { data: appointments } = await supabase
     .from("appointments")
@@ -265,6 +274,7 @@ export async function getAvailableSlots(
     period,
     occupied,
     lunchBreak,
+    appointmentBufferMinutes,
   });
 
   if (!bookingMode) return slots;
