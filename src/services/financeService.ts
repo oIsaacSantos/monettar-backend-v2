@@ -64,6 +64,16 @@ function getPreviousMonth(month: string) {
   return `${previous.getUTCFullYear()}-${String(previous.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
+function getMonthOffset(month: string, offset: number) {
+  if (!/^\d{4}-\d{2}$/.test(month)) {
+    throw new Error("Mes invalido. Use o formato YYYY-MM.");
+  }
+
+  const [year, monthNumber] = month.split("-").map(Number);
+  const target = new Date(Date.UTC(year, monthNumber - 1 + offset, 1, 12));
+  return `${target.getUTCFullYear()}-${String(target.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
 function getDayOfWeek(date: string) {
   return new Date(`${date}T12:00:00Z`).getUTCDay();
 }
@@ -351,6 +361,28 @@ export async function calculateMonthlyFinancialSummary(businessId: string, month
       breakdown: previous.breakdown,
     },
   };
+}
+
+export async function calculateMonthlyFinancialEvolution(businessId: string, months = 6) {
+  const safeMonths = Math.max(1, Math.min(24, Math.trunc(months) || 6));
+  const currentMonth = currentMonthBRT();
+  const result = [];
+
+  for (let index = safeMonths - 1; index >= 0; index--) {
+    const month = getMonthOffset(currentMonth, -index);
+    const summary = await calculateMonthlyFinancialSummary(businessId, month);
+    result.push({
+      month: summary.month,
+      revenue: summary.revenue,
+      totalCost: summary.totalCost,
+      profit: summary.profit,
+      margin: summary.margin,
+      appointmentsCount: summary.appointmentsCount,
+      averageTicket: summary.averageTicket,
+    });
+  }
+
+  return result;
 }
 
 export async function calculateServiceRanking(businessId: string, month = currentMonthBRT()) {

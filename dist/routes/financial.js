@@ -35,3 +35,19 @@ exports.financialRouter.get("/service-ranking", async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
+exports.financialRouter.get("/evolution", async (req, res) => {
+    const businessId = req.query.businessId;
+    const requestedMonths = Number(req.query.months ?? 6);
+    const months = Math.max(1, Math.min(24, Math.trunc(requestedMonths) || 6));
+    if (!businessId) {
+        res.status(400).json({ error: "businessId obrigatorio" });
+        return;
+    }
+    try {
+        const evolution = await (0, financeService_1.calculateMonthlyFinancialEvolution)(businessId, months);
+        res.json(evolution);
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});

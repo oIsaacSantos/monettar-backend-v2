@@ -10,6 +10,7 @@ exports.calculateServiceOperationalCost = calculateServiceOperationalCost;
 exports.calculateServiceTotalCost = calculateServiceTotalCost;
 exports.calculateAppointmentFinancials = calculateAppointmentFinancials;
 exports.calculateMonthlyFinancialSummary = calculateMonthlyFinancialSummary;
+exports.calculateMonthlyFinancialEvolution = calculateMonthlyFinancialEvolution;
 exports.calculateServiceRanking = calculateServiceRanking;
 const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
@@ -60,6 +61,14 @@ function getPreviousMonth(month) {
     const [year, monthNumber] = month.split("-").map(Number);
     const previous = new Date(Date.UTC(year, monthNumber - 2, 1, 12));
     return `${previous.getUTCFullYear()}-${String(previous.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+function getMonthOffset(month, offset) {
+    if (!/^\d{4}-\d{2}$/.test(month)) {
+        throw new Error("Mes invalido. Use o formato YYYY-MM.");
+    }
+    const [year, monthNumber] = month.split("-").map(Number);
+    const target = new Date(Date.UTC(year, monthNumber - 1 + offset, 1, 12));
+    return `${target.getUTCFullYear()}-${String(target.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 function getDayOfWeek(date) {
     return new Date(`${date}T12:00:00Z`).getUTCDay();
@@ -295,6 +304,25 @@ async function calculateMonthlyFinancialSummary(businessId, month = (0, date_1.c
             breakdown: previous.breakdown,
         },
     };
+}
+async function calculateMonthlyFinancialEvolution(businessId, months = 6) {
+    const safeMonths = Math.max(1, Math.min(24, Math.trunc(months) || 6));
+    const currentMonth = (0, date_1.currentMonthBRT)();
+    const result = [];
+    for (let index = safeMonths - 1; index >= 0; index--) {
+        const month = getMonthOffset(currentMonth, -index);
+        const summary = await calculateMonthlyFinancialSummary(businessId, month);
+        result.push({
+            month: summary.month,
+            revenue: summary.revenue,
+            totalCost: summary.totalCost,
+            profit: summary.profit,
+            margin: summary.margin,
+            appointmentsCount: summary.appointmentsCount,
+            averageTicket: summary.averageTicket,
+        });
+    }
+    return result;
 }
 async function calculateServiceRanking(businessId, month = (0, date_1.currentMonthBRT)()) {
     const range = getMonthRange(month);
