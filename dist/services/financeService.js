@@ -10,6 +10,7 @@ exports.calculateServiceOperationalCost = calculateServiceOperationalCost;
 exports.calculateServiceTotalCost = calculateServiceTotalCost;
 exports.calculateAppointmentFinancials = calculateAppointmentFinancials;
 exports.calculateMonthlyFinancialSummary = calculateMonthlyFinancialSummary;
+exports.calculateServiceRanking = calculateServiceRanking;
 const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
 const supabase_js_1 = require("@supabase/supabase-js");
@@ -279,5 +280,72 @@ async function calculateMonthlyFinancialSummary(businessId, month = (0, date_1.c
             appointmentsCount: previous.appointmentsCount,
             averageTicket: previous.averageTicket,
         },
+    };
+}
+async function calculateServiceRanking(businessId, month = (0, date_1.currentMonthBRT)()) {
+    const range = getMonthRange(month);
+    const { data: business, error: businessError } = await supabase
+        .from("businesses")
+        .select("id, signal_type, signal_value, signal_base_value, signal_per_30min")
+        .eq("id", businessId)
+        .single();
+    if (businessError)
+        throw new Error(businessError.message);
+    const { data: appointments, error: appointmentsError } = await supabase
+        .from("appointments")
+        .select(`
+      id,
+      service_id,
+      appointment_date,
+      charged_amount,
+      discount,
+      payment_status,
+      services(id, name, duration_minutes, material_cost_estimate)
+    `)
+        .eq("business_id", businessId)
+        .gte("appointment_date", range.start)
+        .lte("appointment_date", range.end)
+        .not("payment_status", "in", '("cancelled","no_show")');
+    if (appointmentsError)
+        throw new Error(appointmentsError.message);
+    const operational = await calculateOperationalCostPerMinute(businessId);
+    const serviceMap = new Map();
+    for (const appointment of appointments ?? []) {
+        const service = Array.isArray(appointment.services)
+            ? appointment.services[0]
+            : appointment.services;
+        const serviceId = appointment.service_id ?? service?.id ?? null;
+        const key = serviceId ?? "unknown";
+        const serviceName = service?.name ?? "Servico sem nome";
+        const financials = await calculateAppointmentFinancials(appointment, business, operational.operationalCostPerMinute);
+        if (!serviceMap.has(key)) {
+            serviceMap.set(key, {
+                serviceId,
+                serviceName,
+                totalRevenue: 0,
+                totalCost: 0,
+                totalProfit: 0,
+                averageMargin: 0,
+                appointmentsCount: 0,
+                marginSum: 0,
+            });
+        }
+        const item = serviceMap.get(key);
+        item.totalRevenue += financials.revenue;
+        item.totalCost += financials.totalCost;
+        item.totalProfit += financials.profit;
+        item.marginSum += financials.margin;
+        item.appointmentsCount += 1;
+    }
+    const items = Array.from(serviceMap.values()).map(({ marginSum, ...item }) => ({
+        ...item,
+        averageMargin: item.appointmentsCount > 0 ? marginSum / item.appointmentsCount : 0,
+    }));
+    const limit = 5;
+    return {
+        mostProfitable: [...items].sort((a, b) => b.totalProfit - a.totalProfit).slice(0, limit),
+        leastProfitable: [...items].sort((a, b) => a.totalProfit - b.totalProfit).slice(0, limit),
+        highestRevenue: [...items].sort((a, b) => b.totalRevenue - a.totalRevenue).slice(0, limit),
+        lowestMargin: [...items].sort((a, b) => a.averageMargin - b.averageMargin).slice(0, limit),
     };
 }

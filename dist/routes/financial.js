@@ -20,3 +20,18 @@ exports.financialRouter.get("/month-summary", async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
+exports.financialRouter.get("/service-ranking", async (req, res) => {
+    const businessId = req.query.businessId;
+    const month = req.query.month ?? (0, date_1.currentMonthBRT)();
+    if (!businessId) {
+        res.status(400).json({ error: "businessId obrigatorio" });
+        return;
+    }
+    try {
+        const ranking = await (0, financeService_1.calculateServiceRanking)(businessId, month);
+        res.json(ranking);
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
