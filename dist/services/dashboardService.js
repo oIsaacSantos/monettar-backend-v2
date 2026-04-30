@@ -9,6 +9,7 @@ dotenv_1.default.config();
 const supabase_js_1 = require("@supabase/supabase-js");
 const date_1 = require("../utils/date");
 const suppliesService_1 = require("./suppliesService");
+const financeService_1 = require("./financeService");
 const supabase = (0, supabase_js_1.createClient)(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 function toSafeNumber(value) {
     const numericValue = Number(value ?? 0);
@@ -37,10 +38,7 @@ async function getDashboardSummary(businessId) {
         .from("appointments")
         .select("charged_amount, discount, appointment_date, service_id, services(id, name, material_cost_estimate)")
         .eq("business_id", businessId);
-    const { data: fixedCosts } = await supabase
-        .from("fixed_costs")
-        .select("amount")
-        .eq("business_id", businessId);
+    const operationalCosts = await (0, financeService_1.calculateOperationalCostPerMinute)(businessId);
     const today = (0, date_1.todayBRT)();
     const month = (0, date_1.currentMonthBRT)();
     let totalRevenue = 0;
@@ -89,7 +87,7 @@ async function getDashboardSummary(businessId) {
         entry.revenue += revenue;
         entry.profit += revenue - material;
     }
-    const totalFixed = (fixedCosts ?? []).reduce((s, c) => s + toSafeNumber(c.amount), 0);
+    const totalFixed = operationalCosts.monthlyOperationalCost;
     const totalProfit = totalRevenue - totalMaterial - totalFixed;
     const totalAppointments = appointments?.length ?? 0;
     const averageTicket = totalAppointments > 0 ? totalRevenue / totalAppointments : 0;
@@ -111,6 +109,9 @@ async function getDashboardSummary(businessId) {
         monthlyGoal: monthlyGoal || null,
         goalProgress,
         totalFixedCosts: totalFixed,
+        monthlyOperationalCost: operationalCosts.monthlyOperationalCost,
+        monthlyWorkMinutes: operationalCosts.monthlyWorkMinutes,
+        operationalCostPerMinute: operationalCosts.operationalCostPerMinute,
         distribution: {
             proLabore,
             reserve,

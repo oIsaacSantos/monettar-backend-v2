@@ -11,29 +11,42 @@ const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
 const supabase_js_1 = require("@supabase/supabase-js");
 const suppliesService_1 = require("./suppliesService");
+const financeService_1 = require("./financeService");
 const supabase = (0, supabase_js_1.createClient)(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 function normalizeDescription(description) {
     const trimmed = description?.trim();
     return trimmed ? trimmed : null;
 }
 async function attachSupplyCosts(businessId, services) {
+    const operational = await (0, financeService_1.calculateOperationalCostPerMinute)(businessId).catch((err) => {
+        console.warn("[services] erro ao calcular custo operacional:", err?.message ?? err);
+        return { operationalCostPerMinute: 0 };
+    });
     return Promise.all(services.map(async (service) => {
         try {
             const calculated = await (0, suppliesService_1.calculateServiceSupplyCost)(service.id, businessId);
+            const operationalCost = Number(service.duration_minutes ?? 0) * operational.operationalCostPerMinute;
+            const totalCost = calculated.cost + operationalCost;
             return {
                 ...service,
                 calculated_material_cost: calculated.cost,
                 material_cost_source: calculated.source,
                 supply_cost_breakdown: calculated.breakdown,
+                operational_cost: operationalCost,
+                total_cost: totalCost,
             };
         }
         catch (err) {
             console.warn("[services] erro ao calcular custo por insumos:", err?.message ?? err);
+            const materialCost = Number(service.material_cost_estimate ?? 0);
+            const operationalCost = Number(service.duration_minutes ?? 0) * operational.operationalCostPerMinute;
             return {
                 ...service,
-                calculated_material_cost: Number(service.material_cost_estimate ?? 0),
+                calculated_material_cost: materialCost,
                 material_cost_source: "material_cost_estimate",
                 supply_cost_breakdown: [],
+                operational_cost: operationalCost,
+                total_cost: materialCost + operationalCost,
             };
         }
     }));

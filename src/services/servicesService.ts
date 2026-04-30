@@ -3,6 +3,7 @@ dotenv.config();
 
 import { createClient } from "@supabase/supabase-js";
 import { calculateServiceSupplyCost } from "./suppliesService";
+import { calculateOperationalCostPerMinute } from "./financeService";
 
 const supabase = createClient(
   process.env.SUPABASE_URL!,
@@ -15,23 +16,36 @@ function normalizeDescription(description?: string | null) {
 }
 
 async function attachSupplyCosts(businessId: string, services: any[]) {
+  const operational = await calculateOperationalCostPerMinute(businessId).catch((err: any) => {
+    console.warn("[services] erro ao calcular custo operacional:", err?.message ?? err);
+    return { operationalCostPerMinute: 0 };
+  });
+
   return Promise.all(
     services.map(async (service) => {
       try {
         const calculated = await calculateServiceSupplyCost(service.id, businessId);
+        const operationalCost = Number(service.duration_minutes ?? 0) * operational.operationalCostPerMinute;
+        const totalCost = calculated.cost + operationalCost;
         return {
           ...service,
           calculated_material_cost: calculated.cost,
           material_cost_source: calculated.source,
           supply_cost_breakdown: calculated.breakdown,
+          operational_cost: operationalCost,
+          total_cost: totalCost,
         };
       } catch (err: any) {
         console.warn("[services] erro ao calcular custo por insumos:", err?.message ?? err);
+        const materialCost = Number(service.material_cost_estimate ?? 0);
+        const operationalCost = Number(service.duration_minutes ?? 0) * operational.operationalCostPerMinute;
         return {
           ...service,
-          calculated_material_cost: Number(service.material_cost_estimate ?? 0),
+          calculated_material_cost: materialCost,
           material_cost_source: "material_cost_estimate",
           supply_cost_breakdown: [],
+          operational_cost: operationalCost,
+          total_cost: materialCost + operationalCost,
         };
       }
     })

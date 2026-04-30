@@ -4,6 +4,7 @@ dotenv.config();
 import { createClient } from "@supabase/supabase-js";
 import { currentMonthBRT, todayBRT } from "../utils/date";
 import { calculateServiceSupplyCost } from "./suppliesService";
+import { calculateOperationalCostPerMinute } from "./financeService";
 
 const supabase = createClient(
   process.env.SUPABASE_URL!,
@@ -49,10 +50,7 @@ export async function getDashboardSummary(businessId: string) {
     .select("charged_amount, discount, appointment_date, service_id, services(id, name, material_cost_estimate)")
     .eq("business_id", businessId);
 
-  const { data: fixedCosts } = await supabase
-    .from("fixed_costs")
-    .select("amount")
-    .eq("business_id", businessId);
+  const operationalCosts = await calculateOperationalCostPerMinute(businessId);
 
   const today = todayBRT();
   const month = currentMonthBRT();
@@ -115,7 +113,7 @@ export async function getDashboardSummary(businessId: string) {
     entry.profit += revenue - material;
   }
 
-  const totalFixed = (fixedCosts ?? []).reduce((s, c) => s + toSafeNumber(c.amount), 0);
+  const totalFixed = operationalCosts.monthlyOperationalCost;
   const totalProfit = totalRevenue - totalMaterial - totalFixed;
   const totalAppointments = appointments?.length ?? 0;
   const averageTicket = totalAppointments > 0 ? totalRevenue / totalAppointments : 0;
@@ -146,6 +144,9 @@ export async function getDashboardSummary(businessId: string) {
     monthlyGoal: monthlyGoal || null,
     goalProgress,
     totalFixedCosts: totalFixed,
+    monthlyOperationalCost: operationalCosts.monthlyOperationalCost,
+    monthlyWorkMinutes: operationalCosts.monthlyWorkMinutes,
+    operationalCostPerMinute: operationalCosts.operationalCostPerMinute,
     distribution: {
       proLabore,
       reserve,
