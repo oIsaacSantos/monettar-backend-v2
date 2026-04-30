@@ -14,6 +14,7 @@ const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
 const supabase_js_1 = require("@supabase/supabase-js");
 const date_1 = require("../utils/date");
+const signal_1 = require("../utils/signal");
 const suppliesService_1 = require("./suppliesService");
 const supabase = (0, supabase_js_1.createClient)(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 const MERCADO_PAGO_SIGNAL_FEE_RATE = 0.0099;
@@ -85,24 +86,6 @@ function getLunchMinutes(business, workStart, workEnd) {
     const overlapStart = Math.max(workStart, lunchStart);
     const overlapEnd = Math.min(workEnd, lunchEnd);
     return Math.max(0, overlapEnd - overlapStart);
-}
-function calculateSignalAmount(appointment, business) {
-    const revenue = toSafeNumber(appointment.charged_amount) - toSafeNumber(appointment.discount);
-    const service = Array.isArray(appointment.services)
-        ? appointment.services[0]
-        : appointment.services;
-    const durationMinutes = toSafeNumber(service?.duration_minutes);
-    const signalType = String(business?.signal_type ?? "fixed");
-    if (signalType === "percentage" || signalType === "percent") {
-        return revenue * (toSafeNumber(business?.signal_value) / 100);
-    }
-    if (signalType === "duration") {
-        const baseValue = toSafeNumber(business?.signal_base_value ?? 20);
-        const per30Minutes = toSafeNumber(business?.signal_per_30min ?? 10);
-        const extraBlocks = Math.ceil(Math.max(0, durationMinutes - 60) / 30);
-        return baseValue + extraBlocks * per30Minutes;
-    }
-    return toSafeNumber(business?.signal_value ?? 20);
 }
 function emptyMonthlySummary(month) {
     return {
@@ -213,7 +196,14 @@ async function calculateAppointmentFinancials(appointment, business, operational
     const costPerMinute = operationalCostPerMinute
         ?? (await calculateOperationalCostPerMinute(business.id)).operationalCostPerMinute;
     const operationalCost = durationMinutes * costPerMinute;
-    const signalAmount = calculateSignalAmount(appointment, business);
+    const signalAmount = (0, signal_1.calculateSignalAmount)({
+        signalType: business?.signal_type,
+        signalValue: business?.signal_value,
+        signalBaseValue: business?.signal_base_value,
+        signalPer30Min: business?.signal_per_30min,
+        durationMinutes,
+        revenue,
+    });
     const mercadoPagoFee = signalAmount * MERCADO_PAGO_SIGNAL_FEE_RATE;
     const totalCost = supplyCost + operationalCost + mercadoPagoFee;
     const profit = revenue - totalCost;

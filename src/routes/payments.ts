@@ -4,6 +4,7 @@ import { createHmac, timingSafeEqual } from "crypto";
 import { createPixPayment, getPaymentStatus } from "../services/paymentService";
 import { sendPushToBusiness } from "../services/notificationService";
 import { todayBRT } from "../utils/date";
+import { calculateSignalAmount } from "../utils/signal";
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -118,25 +119,50 @@ async function notifyPaidAppointment(appointmentId: string) {
 
 // Criar pagamento PIX para sinal
 paymentsRouter.post("/pix", async (req: Request, res: Response) => {
-  const { appointmentId, businessId, amount, payerEmail, payerName } = req.body;
+  const { appointmentId, businessId, payerEmail, payerName } = req.body;
 
-  if (!appointmentId || !businessId || !amount || !payerName) {
-    res.status(400).json({ error: "Campos obrigatórios: appointmentId, businessId, amount, payerName" });
+  if (!appointmentId || !businessId || !payerName) {
+    res.status(400).json({ error: "Campos obrigatorios: appointmentId, businessId, payerName" });
     return;
   }
 
   try {
     const { data: business } = await supabase
       .from("businesses")
-      .select("mp_access_token, name, signal_type, signal_value")
+      .select("mp_access_token, name, signal_type, signal_value, signal_base_value, signal_per_30min")
       .eq("id", businessId)
       .single();
+
+    const { data: appointment, error: appointmentError } = await supabase
+      .from("appointments")
+      .select("charged_amount, discount, services(duration_minutes)")
+      .eq("id", appointmentId)
+      .eq("business_id", businessId)
+      .single();
+
+    if (appointmentError || !appointment) {
+      res.status(404).json({ error: "Agendamento nao encontrado" });
+      return;
+    }
+
+    const service = Array.isArray(appointment.services)
+      ? appointment.services[0]
+      : appointment.services;
+    const revenue = Number(appointment.charged_amount ?? 0) - Number(appointment.discount ?? 0);
+    const signalAmount = calculateSignalAmount({
+      signalType: business?.signal_type,
+      signalValue: business?.signal_value,
+      signalBaseValue: business?.signal_base_value,
+      signalPer30Min: business?.signal_per_30min,
+      durationMinutes: service?.duration_minutes,
+      revenue,
+    });
 
     const accessToken = business?.mp_access_token?.trim() || process.env.MP_ACCESS_TOKEN!;
 
     const pixData = await createPixPayment({
       accessToken,
-      amount: Number(amount),
+      amount: signalAmount,
       description: `Sinal - ${business?.name ?? "Agendamento"}`,
       payerEmail: payerEmail ?? "cliente@monettar.app",
       payerName,

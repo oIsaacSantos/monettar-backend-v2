@@ -10,6 +10,7 @@ const crypto_1 = require("crypto");
 const paymentService_1 = require("../services/paymentService");
 const notificationService_1 = require("../services/notificationService");
 const date_1 = require("../utils/date");
+const signal_1 = require("../utils/signal");
 const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
 const supabase = (0, supabase_js_1.createClient)(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
@@ -107,21 +108,43 @@ async function notifyPaidAppointment(appointmentId) {
 }
 // Criar pagamento PIX para sinal
 exports.paymentsRouter.post("/pix", async (req, res) => {
-    const { appointmentId, businessId, amount, payerEmail, payerName } = req.body;
-    if (!appointmentId || !businessId || !amount || !payerName) {
-        res.status(400).json({ error: "Campos obrigatórios: appointmentId, businessId, amount, payerName" });
+    const { appointmentId, businessId, payerEmail, payerName } = req.body;
+    if (!appointmentId || !businessId || !payerName) {
+        res.status(400).json({ error: "Campos obrigatorios: appointmentId, businessId, payerName" });
         return;
     }
     try {
         const { data: business } = await supabase
             .from("businesses")
-            .select("mp_access_token, name, signal_type, signal_value")
+            .select("mp_access_token, name, signal_type, signal_value, signal_base_value, signal_per_30min")
             .eq("id", businessId)
             .single();
+        const { data: appointment, error: appointmentError } = await supabase
+            .from("appointments")
+            .select("charged_amount, discount, services(duration_minutes)")
+            .eq("id", appointmentId)
+            .eq("business_id", businessId)
+            .single();
+        if (appointmentError || !appointment) {
+            res.status(404).json({ error: "Agendamento nao encontrado" });
+            return;
+        }
+        const service = Array.isArray(appointment.services)
+            ? appointment.services[0]
+            : appointment.services;
+        const revenue = Number(appointment.charged_amount ?? 0) - Number(appointment.discount ?? 0);
+        const signalAmount = (0, signal_1.calculateSignalAmount)({
+            signalType: business?.signal_type,
+            signalValue: business?.signal_value,
+            signalBaseValue: business?.signal_base_value,
+            signalPer30Min: business?.signal_per_30min,
+            durationMinutes: service?.duration_minutes,
+            revenue,
+        });
         const accessToken = business?.mp_access_token?.trim() || process.env.MP_ACCESS_TOKEN;
         const pixData = await (0, paymentService_1.createPixPayment)({
             accessToken,
-            amount: Number(amount),
+            amount: signalAmount,
             description: `Sinal - ${business?.name ?? "Agendamento"}`,
             payerEmail: payerEmail ?? "cliente@monettar.app",
             payerName,
