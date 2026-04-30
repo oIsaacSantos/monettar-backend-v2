@@ -16,6 +16,17 @@ function toSafeNumber(value: unknown) {
   return Number.isFinite(numericValue) ? numericValue : 0;
 }
 
+function getAppointmentServices(appointment: any) {
+  const linkedServices = (appointment.appointment_services ?? [])
+    .map((row: any) => Array.isArray(row.services) ? row.services[0] : row.services)
+    .filter(Boolean);
+  if (linkedServices.length > 0) return linkedServices;
+  const service = Array.isArray(appointment.services)
+    ? appointment.services[0]
+    : appointment.services;
+  return service ? [service] : [];
+}
+
 function calculateMonthlyGoal(
   businessId: string,
   fixedCosts: number,
@@ -47,8 +58,9 @@ export async function getDashboardSummary(businessId: string) {
 
   const { data: appointments } = await supabase
     .from("appointments")
-    .select("charged_amount, discount, appointment_date, service_id, services(id, name, material_cost_estimate)")
-    .eq("business_id", businessId);
+    .select("charged_amount, discount, appointment_date, service_id, payment_status, services(id, name, material_cost_estimate), appointment_services(service_id, services(id, name, material_cost_estimate))")
+    .eq("business_id", businessId)
+    .not("payment_status", "in", '("cancelled","no_show")');
 
   const operationalCosts = await calculateOperationalCostPerMinute(businessId);
 
@@ -74,11 +86,34 @@ export async function getDashboardSummary(businessId: string) {
   for (const a of appointments ?? []) {
     const revenue = Number(a.charged_amount ?? 0) - Number(a.discount ?? 0);
     const svc = Array.isArray(a.services) ? a.services[0] : (a.services as any);
+    const linkedServices = getAppointmentServices(a);
     let material = Number(svc?.material_cost_estimate ?? 0);
-    const svcId = (a.service_id as string) ?? null;
-    const svcName = svc?.name ?? "Sem serviço";
+    const serviceIds = linkedServices.map((service: any) => service?.id).filter(Boolean);
+    const svcId = serviceIds.length === 1 ? serviceIds[0] : ((a.service_id as string) ?? null);
+    const svcName = linkedServices.length > 0
+      ? linkedServices.map((service: any) => service?.name ?? "Sem serviço").join(" + ")
+      : (svc?.name ?? "Sem serviço");
 
-    if (svcId) {
+    if (linkedServices.length > 0) {
+      material = 0;
+      for (const service of linkedServices) {
+        const currentServiceId = (service?.id as string) ?? null;
+        let serviceMaterial = Number(service?.material_cost_estimate ?? 0);
+        if (currentServiceId) {
+          if (!serviceCostCache.has(currentServiceId)) {
+            try {
+              const calculated = await calculateServiceSupplyCost(currentServiceId, businessId);
+              serviceCostCache.set(currentServiceId, calculated.cost);
+            } catch (err: any) {
+              console.warn("[dashboard] erro ao calcular custo por insumos:", err?.message ?? err);
+              serviceCostCache.set(currentServiceId, serviceMaterial);
+            }
+          }
+          serviceMaterial = serviceCostCache.get(currentServiceId) ?? serviceMaterial;
+        }
+        material += serviceMaterial;
+      }
+    } else if (svcId) {
       if (!serviceCostCache.has(svcId)) {
         try {
           const calculated = await calculateServiceSupplyCost(svcId, businessId);
@@ -103,7 +138,7 @@ export async function getDashboardSummary(businessId: string) {
       monthAppointments += 1;
     }
 
-    const key = svcId ?? "__none__";
+    const key = serviceIds.length > 0 ? serviceIds.join("+") : "__none__";
     if (!serviceMap.has(key)) {
       serviceMap.set(key, { serviceId: svcId, name: svcName, appointments: 0, revenue: 0, profit: 0 });
     }

@@ -7,6 +7,68 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
+type AppointmentServiceSnapshot = {
+  service_id: string;
+  price?: number | null;
+  duration_minutes?: number | null;
+};
+
+function normalizePaymentStatus(status?: string | null) {
+  return status === "paid" ? "confirmed" : (status ?? "pending");
+}
+
+function normalizeAppointmentServices(appointment: any) {
+  const linkedServices = (appointment.appointment_services ?? [])
+    .map((row: any) => {
+      const service = Array.isArray(row.services) ? row.services[0] : row.services;
+      return service ? {
+        ...service,
+        price: row.price ?? service.current_price ?? null,
+        duration_minutes: row.duration_minutes ?? service.duration_minutes ?? null,
+      } : null;
+    })
+    .filter(Boolean);
+  const legacyService = Array.isArray(appointment.services)
+    ? (appointment.services[0] ?? null)
+    : appointment.services;
+  const servicesList = linkedServices.length > 0
+    ? linkedServices
+    : (legacyService ? [legacyService] : []);
+
+  return {
+    ...appointment,
+    services: servicesList[0] ?? legacyService ?? null,
+    services_list: servicesList,
+  };
+}
+
+async function replaceAppointmentServices(
+  appointmentId: string,
+  services: AppointmentServiceSnapshot[]
+) {
+  await supabase.from("appointment_services").delete().eq("appointment_id", appointmentId);
+  if (services.length === 0) return;
+
+  const rowsWithSnapshots = services.map((service) => ({
+    appointment_id: appointmentId,
+    service_id: service.service_id,
+    price: service.price ?? null,
+    duration_minutes: service.duration_minutes ?? null,
+  }));
+
+  const { error } = await supabase.from("appointment_services").insert(rowsWithSnapshots);
+  if (!error) return;
+
+  if (error.code !== "42703") throw new Error(error.message);
+
+  const fallbackRows = services.map((service) => ({
+    appointment_id: appointmentId,
+    service_id: service.service_id,
+  }));
+  const fallback = await supabase.from("appointment_services").insert(fallbackRows);
+  if (fallback.error) throw new Error(fallback.error.message);
+}
+
 export async function createAppointment(payload: {
   businessId: string;
   serviceId: string;
@@ -29,7 +91,7 @@ export async function createAppointment(payload: {
       end_time: payload.endTime,
       charged_amount: payload.chargedAmount,
       discount: 0,
-      payment_status: payload.status,
+      payment_status: normalizePaymentStatus(payload.status),
       notes: payload.notes?.trim() || null,
       quantity: 1,
     })
@@ -37,6 +99,7 @@ export async function createAppointment(payload: {
     .single();
 
   if (error) throw new Error(error.message);
+  await replaceAppointmentServices(data.id, [{ service_id: payload.serviceId }]);
   return data;
 }
 
@@ -61,7 +124,7 @@ export async function updateAppointment(
       start_time: payload.startTime,
       end_time: payload.endTime,
       charged_amount: payload.chargedAmount,
-      payment_status: payload.paymentStatus,
+      payment_status: payload.paymentStatus ? normalizePaymentStatus(payload.paymentStatus) : undefined,
       notes: payload.notes,
     })
     .eq("id", id)
@@ -69,6 +132,9 @@ export async function updateAppointment(
     .select()
     .single();
   if (error) throw new Error(error.message);
+  if (payload.serviceId) {
+    await replaceAppointmentServices(id, [{ service_id: payload.serviceId }]);
+  }
   return data;
 }
 
@@ -99,17 +165,17 @@ export async function getAllAppointments(businessId: string, page: number, limit
       payment_status,
       notes,
       clients(id, name, phone),
-      services(id, name, duration_minutes)
+      services(id, name, duration_minutes),
+      appointment_services(service_id, services(id, name, current_price, duration_minutes))
     `, { count: "exact" })
     .eq("business_id", businessId)
     .order("appointment_date", { ascending: false })
     .order("start_time", { ascending: false })
     .range(from, to);
   if (error) throw new Error(error.message);
-  const appointments = (data ?? []).map((a: any) => ({
+  const appointments = (data ?? []).map((a: any) => normalizeAppointmentServices({
     ...a,
     clients: Array.isArray(a.clients) ? (a.clients[0] ?? null) : a.clients,
-    services: Array.isArray(a.services) ? (a.services[0] ?? null) : a.services,
   }));
 
   return {
@@ -126,17 +192,16 @@ export async function getAppointmentsByMonth(businessId: string, year: number, m
   const end = `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
   const { data, error } = await supabase
     .from("appointments")
-    .select(`id, appointment_date, start_time, end_time, charged_amount, discount, payment_status, clients(id, name), services(id, name)`)
+    .select(`id, appointment_date, start_time, end_time, charged_amount, discount, payment_status, clients(id, name), services(id, name), appointment_services(service_id, services(id, name))`)
     .eq("business_id", businessId)
     .gte("appointment_date", start)
     .lte("appointment_date", end)
     .order("appointment_date", { ascending: true })
     .order("start_time", { ascending: true });
   if (error) throw new Error(error.message);
-  return (data ?? []).map((a: any) => ({
+  return (data ?? []).map((a: any) => normalizeAppointmentServices({
     ...a,
     clients: Array.isArray(a.clients) ? (a.clients[0] ?? null) : a.clients,
-    services: Array.isArray(a.services) ? (a.services[0] ?? null) : a.services,
   }));
 }
 
@@ -153,7 +218,8 @@ export async function getAppointmentsByDate(businessId: string, date: string) {
       payment_status,
       notes,
       clients(id, name, phone),
-      services(id, name, duration_minutes)
+      services(id, name, duration_minutes),
+      appointment_services(service_id, services(id, name, current_price, duration_minutes))
     `)
     .eq("business_id", businessId)
     .eq("appointment_date", date)
@@ -161,13 +227,10 @@ export async function getAppointmentsByDate(businessId: string, date: string) {
 
   if (error) throw new Error(error.message);
 
-  return (data ?? []).map((appt: any) => ({
+  return (data ?? []).map((appt: any) => normalizeAppointmentServices({
     ...appt,
     clients: Array.isArray(appt.clients)
       ? (appt.clients[0] ?? null)
       : appt.clients,
-    services: Array.isArray(appt.services)
-      ? (appt.services[0] ?? null)
-      : appt.services,
   }));
 }

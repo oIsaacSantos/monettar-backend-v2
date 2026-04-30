@@ -45,6 +45,26 @@ const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
 const supabase = (0, supabase_js_1.createClient)(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 exports.bookingRouter = (0, express_1.Router)();
+async function saveAppointmentServices(appointmentId, services) {
+    const rowsWithSnapshots = services.map((service) => ({
+        appointment_id: appointmentId,
+        service_id: service.id,
+        price: Number(service.current_price ?? 0),
+        duration_minutes: Number(service.duration_minutes ?? 0),
+    }));
+    const { error } = await supabase.from("appointment_services").insert(rowsWithSnapshots);
+    if (!error)
+        return;
+    if (error.code !== "42703")
+        throw new Error(error.message);
+    const fallbackRows = services.map((service) => ({
+        appointment_id: appointmentId,
+        service_id: service.id,
+    }));
+    const fallback = await supabase.from("appointment_services").insert(fallbackRows);
+    if (fallback.error)
+        throw new Error(fallback.error.message);
+}
 // Busca negócio pelo slug
 exports.bookingRouter.get("/:slug/business", async (req, res) => {
     const { slug } = req.params;
@@ -148,12 +168,19 @@ exports.bookingRouter.get("/:slug/my-appointments", async (req, res) => {
     const today = (0, date_1.todayBRT)();
     const { data } = await supabase
         .from("appointments")
-        .select("id, appointment_date, start_time, end_time, payment_status, services(name)")
+        .select("id, appointment_date, start_time, end_time, payment_status, services(name), appointment_services(service_id, services(name))")
         .eq("business_id", business.id)
         .eq("client_id", client.id)
         .gte("appointment_date", today)
         .order("appointment_date", { ascending: true });
-    res.json((data ?? []).map((a) => ({ ...a, services: Array.isArray(a.services) ? a.services[0] : a.services })));
+    res.json((data ?? []).map((a) => {
+        const legacyService = Array.isArray(a.services) ? a.services[0] : a.services;
+        const linkedServices = (a.appointment_services ?? [])
+            .map((row) => Array.isArray(row.services) ? row.services[0] : row.services)
+            .filter(Boolean);
+        const servicesList = linkedServices.length > 0 ? linkedServices : (legacyService ? [legacyService] : []);
+        return { ...a, services: servicesList[0] ?? null, services_list: servicesList };
+    }));
 });
 exports.bookingRouter.get("/:slug/client-packages", async (req, res) => {
     const { phone } = req.query;
@@ -269,11 +296,18 @@ exports.bookingRouter.post("/:slug/appointment", async (req, res) => {
         const { data: servicesData } = await supabase
             .from("services")
             .select("id, current_price, duration_minutes")
+            .eq("business_id", business.id)
             .in("id", ids);
-        const totalCharged = (servicesData ?? []).reduce((sum, s) => sum + Number(s.current_price), 0);
+        if (!servicesData || servicesData.length !== ids.length) {
+            res.status(400).json({ error: "Um ou mais serviÃ§os sÃ£o invÃ¡lidos" });
+            return;
+        }
+        const servicesById = new Map(servicesData.map((service) => [service.id, service]));
+        const orderedServices = ids.map((id) => servicesById.get(id)).filter(Boolean);
+        const totalCharged = orderedServices.reduce((sum, s) => sum + Number(s.current_price), 0);
         // Duração total: usa totalDuration do body ou soma das durações dos serviços
         const duration = totalDuration
-            ?? (servicesData ?? []).reduce((sum, s) => sum + Number(s.duration_minutes), 0)
+            ?? orderedServices.reduce((sum, s) => sum + Number(s.duration_minutes), 0)
             ?? 60;
         const [h, m] = startTime.split(":").map(Number);
         const endDate = new Date(2000, 0, 1, h, m + duration);
@@ -317,6 +351,7 @@ exports.bookingRouter.post("/:slug/appointment", async (req, res) => {
         }
         if (apptError)
             throw new Error(apptError.message);
+        await saveAppointmentServices(appointment.id, orderedServices);
         res.status(201).json({ appointment, clientId });
     }
     catch (err) {

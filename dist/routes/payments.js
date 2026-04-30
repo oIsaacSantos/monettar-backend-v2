@@ -65,12 +65,12 @@ function isMercadoPagoWebhookSignatureValid(req) {
         return false;
     }
 }
-async function notifyPaidAppointment(appointmentId) {
+async function notifyConfirmedAppointment(appointmentId) {
     console.log("[push-confirmed] appointment id:", appointmentId);
     try {
         const { data: appt, error } = await supabase
             .from("appointments")
-            .select("business_id, clients(name), services(name), start_time, appointment_date")
+            .select("business_id, clients(name), services(name), appointment_services(service_id, services(name)), start_time, appointment_date")
             .eq("id", appointmentId)
             .single();
         if (error) {
@@ -84,7 +84,12 @@ async function notifyPaidAppointment(appointmentId) {
         const client = Array.isArray(appt.clients) ? appt.clients[0] : appt.clients;
         const service = Array.isArray(appt.services) ? appt.services[0] : appt.services;
         const clientName = client?.name ?? "Cliente";
-        const serviceName = service?.name ?? "Serviço";
+        const linkedServices = (appt.appointment_services ?? [])
+            .map((row) => Array.isArray(row.services) ? row.services[0] : row.services)
+            .filter(Boolean);
+        const serviceName = linkedServices.length > 0
+            ? linkedServices.map((item) => item.name).join(" + ")
+            : (service?.name ?? "Serviço");
         const time = appt.start_time?.slice(0, 5) ?? "";
         const [y, mo, d] = (appt.appointment_date ?? "").split("-");
         const dateFormatted = y ? `${d}/${mo}/${y}` : "";
@@ -121,7 +126,7 @@ exports.paymentsRouter.post("/pix", async (req, res) => {
             .single();
         const { data: appointment, error: appointmentError } = await supabase
             .from("appointments")
-            .select("charged_amount, discount, services(duration_minutes)")
+            .select("charged_amount, discount, services(duration_minutes), appointment_services(service_id, services(duration_minutes))")
             .eq("id", appointmentId)
             .eq("business_id", businessId)
             .single();
@@ -132,13 +137,19 @@ exports.paymentsRouter.post("/pix", async (req, res) => {
         const service = Array.isArray(appointment.services)
             ? appointment.services[0]
             : appointment.services;
+        const linkedServices = (appointment.appointment_services ?? [])
+            .map((row) => Array.isArray(row.services) ? row.services[0] : row.services)
+            .filter(Boolean);
+        const durationMinutes = linkedServices.length > 0
+            ? linkedServices.reduce((sum, item) => sum + Number(item.duration_minutes ?? 0), 0)
+            : service?.duration_minutes;
         const revenue = Number(appointment.charged_amount ?? 0) - Number(appointment.discount ?? 0);
         const signalAmount = (0, signal_1.calculateSignalAmount)({
             signalType: business?.signal_type,
             signalValue: business?.signal_value,
             signalBaseValue: business?.signal_base_value,
             signalPer30Min: business?.signal_per_30min,
-            durationMinutes: service?.duration_minutes,
+            durationMinutes,
             revenue,
         });
         const accessToken = business?.mp_access_token?.trim() || process.env.MP_ACCESS_TOKEN;
@@ -176,18 +187,18 @@ exports.paymentsRouter.get("/status/:paymentId", async (req, res) => {
         const accessToken = business?.mp_access_token?.trim() || process.env.MP_ACCESS_TOKEN;
         const status = await (0, paymentService_1.getPaymentStatus)(accessToken, paymentId);
         if (status === "approved") {
-            console.log("[push-confirmed] payment paid detected");
+            console.log("[push-confirmed] approved payment detected");
             const { data: appt } = await supabase
                 .from("appointments")
                 .select("id, payment_status")
                 .eq("mp_payment_id", paymentId)
                 .single();
-            if (appt && appt.payment_status !== "paid") {
+            if (appt && appt.payment_status !== "confirmed") {
                 await supabase
                     .from("appointments")
-                    .update({ payment_status: "paid", paid_date: (0, date_1.todayBRT)() })
+                    .update({ payment_status: "confirmed", paid_date: (0, date_1.todayBRT)() })
                     .eq("id", appt.id);
-                await notifyPaidAppointment(appt.id);
+                await notifyConfirmedAppointment(appt.id);
             }
         }
         res.json({ status });
@@ -220,14 +231,36 @@ exports.paymentsRouter.post("/webhook", async (req, res) => {
                     .single();
                 accessToken = business?.mp_access_token?.trim() || accessToken;
             }
-            const status = await (0, paymentService_1.getPaymentStatus)(accessToken, paymentId);
-            if (status === "approved" && appt && appt.payment_status !== "paid") {
-                console.log("[push-confirmed] payment paid detected");
+            const paymentDetails = await (0, paymentService_1.getPaymentDetails)(accessToken, paymentId);
+            const status = paymentDetails.status;
+            const externalReference = paymentDetails.external_reference
+                ? String(paymentDetails.external_reference)
+                : null;
+            if (status === "approved" && appt && appt.payment_status !== "confirmed") {
+                console.log("[push-confirmed] approved payment detected");
                 await supabase
                     .from("appointments")
-                    .update({ payment_status: "paid", paid_date: (0, date_1.todayBRT)() })
+                    .update({ payment_status: "confirmed", paid_date: (0, date_1.todayBRT)() })
                     .eq("mp_payment_id", paymentId);
-                await notifyPaidAppointment(appt.id);
+                await notifyConfirmedAppointment(appt.id);
+            }
+            else if (status === "approved" && !appt && externalReference) {
+                const { data: fallbackAppt } = await supabase
+                    .from("appointments")
+                    .select("id, payment_status")
+                    .eq("id", externalReference)
+                    .single();
+                if (fallbackAppt && fallbackAppt.payment_status !== "confirmed") {
+                    await supabase
+                        .from("appointments")
+                        .update({
+                        payment_status: "confirmed",
+                        paid_date: (0, date_1.todayBRT)(),
+                        mp_payment_id: paymentId,
+                    })
+                        .eq("id", fallbackAppt.id);
+                    await notifyConfirmedAppointment(fallbackAppt.id);
+                }
             }
         }
         catch (err) {

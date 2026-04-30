@@ -13,6 +13,55 @@ const supabase_js_1 = require("@supabase/supabase-js");
 const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
 const supabase = (0, supabase_js_1.createClient)(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
+function normalizePaymentStatus(status) {
+    return status === "paid" ? "confirmed" : (status ?? "pending");
+}
+function normalizeAppointmentServices(appointment) {
+    const linkedServices = (appointment.appointment_services ?? [])
+        .map((row) => {
+        const service = Array.isArray(row.services) ? row.services[0] : row.services;
+        return service ? {
+            ...service,
+            price: row.price ?? service.current_price ?? null,
+            duration_minutes: row.duration_minutes ?? service.duration_minutes ?? null,
+        } : null;
+    })
+        .filter(Boolean);
+    const legacyService = Array.isArray(appointment.services)
+        ? (appointment.services[0] ?? null)
+        : appointment.services;
+    const servicesList = linkedServices.length > 0
+        ? linkedServices
+        : (legacyService ? [legacyService] : []);
+    return {
+        ...appointment,
+        services: servicesList[0] ?? legacyService ?? null,
+        services_list: servicesList,
+    };
+}
+async function replaceAppointmentServices(appointmentId, services) {
+    await supabase.from("appointment_services").delete().eq("appointment_id", appointmentId);
+    if (services.length === 0)
+        return;
+    const rowsWithSnapshots = services.map((service) => ({
+        appointment_id: appointmentId,
+        service_id: service.service_id,
+        price: service.price ?? null,
+        duration_minutes: service.duration_minutes ?? null,
+    }));
+    const { error } = await supabase.from("appointment_services").insert(rowsWithSnapshots);
+    if (!error)
+        return;
+    if (error.code !== "42703")
+        throw new Error(error.message);
+    const fallbackRows = services.map((service) => ({
+        appointment_id: appointmentId,
+        service_id: service.service_id,
+    }));
+    const fallback = await supabase.from("appointment_services").insert(fallbackRows);
+    if (fallback.error)
+        throw new Error(fallback.error.message);
+}
 async function createAppointment(payload) {
     const { data, error } = await supabase
         .from("appointments")
@@ -25,7 +74,7 @@ async function createAppointment(payload) {
         end_time: payload.endTime,
         charged_amount: payload.chargedAmount,
         discount: 0,
-        payment_status: payload.status,
+        payment_status: normalizePaymentStatus(payload.status),
         notes: payload.notes?.trim() || null,
         quantity: 1,
     })
@@ -33,6 +82,7 @@ async function createAppointment(payload) {
         .single();
     if (error)
         throw new Error(error.message);
+    await replaceAppointmentServices(data.id, [{ service_id: payload.serviceId }]);
     return data;
 }
 async function updateAppointment(id, businessId, payload) {
@@ -44,7 +94,7 @@ async function updateAppointment(id, businessId, payload) {
         start_time: payload.startTime,
         end_time: payload.endTime,
         charged_amount: payload.chargedAmount,
-        payment_status: payload.paymentStatus,
+        payment_status: payload.paymentStatus ? normalizePaymentStatus(payload.paymentStatus) : undefined,
         notes: payload.notes,
     })
         .eq("id", id)
@@ -53,6 +103,9 @@ async function updateAppointment(id, businessId, payload) {
         .single();
     if (error)
         throw new Error(error.message);
+    if (payload.serviceId) {
+        await replaceAppointmentServices(id, [{ service_id: payload.serviceId }]);
+    }
     return data;
 }
 async function deleteAppointment(id, businessId) {
@@ -80,7 +133,8 @@ async function getAllAppointments(businessId, page, limit) {
       payment_status,
       notes,
       clients(id, name, phone),
-      services(id, name, duration_minutes)
+      services(id, name, duration_minutes),
+      appointment_services(service_id, services(id, name, current_price, duration_minutes))
     `, { count: "exact" })
         .eq("business_id", businessId)
         .order("appointment_date", { ascending: false })
@@ -88,10 +142,9 @@ async function getAllAppointments(businessId, page, limit) {
         .range(from, to);
     if (error)
         throw new Error(error.message);
-    const appointments = (data ?? []).map((a) => ({
+    const appointments = (data ?? []).map((a) => normalizeAppointmentServices({
         ...a,
         clients: Array.isArray(a.clients) ? (a.clients[0] ?? null) : a.clients,
-        services: Array.isArray(a.services) ? (a.services[0] ?? null) : a.services,
     }));
     return {
         data: appointments,
@@ -106,7 +159,7 @@ async function getAppointmentsByMonth(businessId, year, month) {
     const end = `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
     const { data, error } = await supabase
         .from("appointments")
-        .select(`id, appointment_date, start_time, end_time, charged_amount, discount, payment_status, clients(id, name), services(id, name)`)
+        .select(`id, appointment_date, start_time, end_time, charged_amount, discount, payment_status, clients(id, name), services(id, name), appointment_services(service_id, services(id, name))`)
         .eq("business_id", businessId)
         .gte("appointment_date", start)
         .lte("appointment_date", end)
@@ -114,10 +167,9 @@ async function getAppointmentsByMonth(businessId, year, month) {
         .order("start_time", { ascending: true });
     if (error)
         throw new Error(error.message);
-    return (data ?? []).map((a) => ({
+    return (data ?? []).map((a) => normalizeAppointmentServices({
         ...a,
         clients: Array.isArray(a.clients) ? (a.clients[0] ?? null) : a.clients,
-        services: Array.isArray(a.services) ? (a.services[0] ?? null) : a.services,
     }));
 }
 async function getAppointmentsByDate(businessId, date) {
@@ -133,20 +185,18 @@ async function getAppointmentsByDate(businessId, date) {
       payment_status,
       notes,
       clients(id, name, phone),
-      services(id, name, duration_minutes)
+      services(id, name, duration_minutes),
+      appointment_services(service_id, services(id, name, current_price, duration_minutes))
     `)
         .eq("business_id", businessId)
         .eq("appointment_date", date)
         .order("start_time", { ascending: true });
     if (error)
         throw new Error(error.message);
-    return (data ?? []).map((appt) => ({
+    return (data ?? []).map((appt) => normalizeAppointmentServices({
         ...appt,
         clients: Array.isArray(appt.clients)
             ? (appt.clients[0] ?? null)
             : appt.clients,
-        services: Array.isArray(appt.services)
-            ? (appt.services[0] ?? null)
-            : appt.services,
     }));
 }

@@ -15,6 +15,17 @@ function toSafeNumber(value) {
     const numericValue = Number(value ?? 0);
     return Number.isFinite(numericValue) ? numericValue : 0;
 }
+function getAppointmentServices(appointment) {
+    const linkedServices = (appointment.appointment_services ?? [])
+        .map((row) => Array.isArray(row.services) ? row.services[0] : row.services)
+        .filter(Boolean);
+    if (linkedServices.length > 0)
+        return linkedServices;
+    const service = Array.isArray(appointment.services)
+        ? appointment.services[0]
+        : appointment.services;
+    return service ? [service] : [];
+}
 function calculateMonthlyGoal(businessId, fixedCosts, proLabore, reservePercent, workingCapitalPercent) {
     const baseGoal = fixedCosts + proLabore;
     const denominator = 1 - reservePercent / 100 - workingCapitalPercent / 100;
@@ -36,8 +47,9 @@ async function getDashboardSummary(businessId) {
         .single();
     const { data: appointments } = await supabase
         .from("appointments")
-        .select("charged_amount, discount, appointment_date, service_id, services(id, name, material_cost_estimate)")
-        .eq("business_id", businessId);
+        .select("charged_amount, discount, appointment_date, service_id, payment_status, services(id, name, material_cost_estimate), appointment_services(service_id, services(id, name, material_cost_estimate))")
+        .eq("business_id", businessId)
+        .not("payment_status", "in", '("cancelled","no_show")');
     const operationalCosts = await (0, financeService_1.calculateOperationalCostPerMinute)(businessId);
     const today = (0, date_1.todayBRT)();
     const month = (0, date_1.currentMonthBRT)();
@@ -52,10 +64,35 @@ async function getDashboardSummary(businessId) {
     for (const a of appointments ?? []) {
         const revenue = Number(a.charged_amount ?? 0) - Number(a.discount ?? 0);
         const svc = Array.isArray(a.services) ? a.services[0] : a.services;
+        const linkedServices = getAppointmentServices(a);
         let material = Number(svc?.material_cost_estimate ?? 0);
-        const svcId = a.service_id ?? null;
-        const svcName = svc?.name ?? "Sem serviço";
-        if (svcId) {
+        const serviceIds = linkedServices.map((service) => service?.id).filter(Boolean);
+        const svcId = serviceIds.length === 1 ? serviceIds[0] : (a.service_id ?? null);
+        const svcName = linkedServices.length > 0
+            ? linkedServices.map((service) => service?.name ?? "Sem serviço").join(" + ")
+            : (svc?.name ?? "Sem serviço");
+        if (linkedServices.length > 0) {
+            material = 0;
+            for (const service of linkedServices) {
+                const currentServiceId = service?.id ?? null;
+                let serviceMaterial = Number(service?.material_cost_estimate ?? 0);
+                if (currentServiceId) {
+                    if (!serviceCostCache.has(currentServiceId)) {
+                        try {
+                            const calculated = await (0, suppliesService_1.calculateServiceSupplyCost)(currentServiceId, businessId);
+                            serviceCostCache.set(currentServiceId, calculated.cost);
+                        }
+                        catch (err) {
+                            console.warn("[dashboard] erro ao calcular custo por insumos:", err?.message ?? err);
+                            serviceCostCache.set(currentServiceId, serviceMaterial);
+                        }
+                    }
+                    serviceMaterial = serviceCostCache.get(currentServiceId) ?? serviceMaterial;
+                }
+                material += serviceMaterial;
+            }
+        }
+        else if (svcId) {
             if (!serviceCostCache.has(svcId)) {
                 try {
                     const calculated = await (0, suppliesService_1.calculateServiceSupplyCost)(svcId, businessId);
@@ -78,7 +115,7 @@ async function getDashboardSummary(businessId) {
             monthRevenue += revenue;
             monthAppointments += 1;
         }
-        const key = svcId ?? "__none__";
+        const key = serviceIds.length > 0 ? serviceIds.join("+") : "__none__";
         if (!serviceMap.has(key)) {
             serviceMap.set(key, { serviceId: svcId, name: svcName, appointments: 0, revenue: 0, profit: 0 });
         }

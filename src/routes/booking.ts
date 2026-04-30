@@ -8,6 +8,29 @@ dotenv.config();
 const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 export const bookingRouter = Router();
 
+async function saveAppointmentServices(
+  appointmentId: string,
+  services: Array<{ id: string; current_price: number; duration_minutes: number }>
+) {
+  const rowsWithSnapshots = services.map((service) => ({
+    appointment_id: appointmentId,
+    service_id: service.id,
+    price: Number(service.current_price ?? 0),
+    duration_minutes: Number(service.duration_minutes ?? 0),
+  }));
+
+  const { error } = await supabase.from("appointment_services").insert(rowsWithSnapshots);
+  if (!error) return;
+  if (error.code !== "42703") throw new Error(error.message);
+
+  const fallbackRows = services.map((service) => ({
+    appointment_id: appointmentId,
+    service_id: service.id,
+  }));
+  const fallback = await supabase.from("appointment_services").insert(fallbackRows);
+  if (fallback.error) throw new Error(fallback.error.message);
+}
+
 // Busca negócio pelo slug
 bookingRouter.get("/:slug/business", async (req: Request, res: Response) => {
   const { slug } = req.params;
@@ -101,12 +124,19 @@ bookingRouter.get("/:slug/my-appointments", async (req: Request, res: Response) 
   const today = todayBRT();
   const { data } = await supabase
     .from("appointments")
-    .select("id, appointment_date, start_time, end_time, payment_status, services(name)")
+    .select("id, appointment_date, start_time, end_time, payment_status, services(name), appointment_services(service_id, services(name))")
     .eq("business_id", business.id)
     .eq("client_id", client.id)
     .gte("appointment_date", today)
     .order("appointment_date", { ascending: true });
-  res.json((data ?? []).map((a: any) => ({ ...a, services: Array.isArray(a.services) ? a.services[0] : a.services })));
+  res.json((data ?? []).map((a: any) => {
+    const legacyService = Array.isArray(a.services) ? a.services[0] : a.services;
+    const linkedServices = (a.appointment_services ?? [])
+      .map((row: any) => Array.isArray(row.services) ? row.services[0] : row.services)
+      .filter(Boolean);
+    const servicesList = linkedServices.length > 0 ? linkedServices : (legacyService ? [legacyService] : []);
+    return { ...a, services: servicesList[0] ?? null, services_list: servicesList };
+  }));
 });
 
 bookingRouter.get("/:slug/client-packages", async (req: Request, res: Response) => {
@@ -210,15 +240,24 @@ bookingRouter.post("/:slug/appointment", async (req: Request, res: Response) => 
     const { data: servicesData } = await supabase
       .from("services")
       .select("id, current_price, duration_minutes")
+      .eq("business_id", business.id)
       .in("id", ids);
 
-    const totalCharged = (servicesData ?? []).reduce(
+    if (!servicesData || servicesData.length !== ids.length) {
+      res.status(400).json({ error: "Um ou mais serviÃ§os sÃ£o invÃ¡lidos" });
+      return;
+    }
+
+    const servicesById = new Map(servicesData.map((service: any) => [service.id, service]));
+    const orderedServices = ids.map((id) => servicesById.get(id)).filter(Boolean) as any[];
+
+    const totalCharged = orderedServices.reduce(
       (sum: number, s: any) => sum + Number(s.current_price), 0
     );
 
     // Duração total: usa totalDuration do body ou soma das durações dos serviços
     const duration = totalDuration
-      ?? (servicesData ?? []).reduce((sum: number, s: any) => sum + Number(s.duration_minutes), 0)
+      ?? orderedServices.reduce((sum: number, s: any) => sum + Number(s.duration_minutes), 0)
       ?? 60;
 
     const [h, m] = startTime.split(":").map(Number);
@@ -266,6 +305,7 @@ bookingRouter.post("/:slug/appointment", async (req: Request, res: Response) => 
       return;
     }
     if (apptError) throw new Error(apptError.message);
+    await saveAppointmentServices(appointment.id, orderedServices);
     res.status(201).json({ appointment, clientId });
   } catch (err: any) {
     res.status(500).json({ error: err.message });

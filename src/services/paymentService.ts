@@ -43,3 +43,9 @@ export async function getPaymentStatus(accessToken: string, paymentId: string) {
   const result = await payment.get({ id: paymentId });
   return result.status;
 }
+
+export async function getPaymentDetails(accessToken: string, paymentId: string) {
+  const client = getMPClient(accessToken);
+  const payment = new Payment(client);
+  return payment.get({ id: paymentId });
+}

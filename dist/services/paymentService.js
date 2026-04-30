@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.getMPClient = getMPClient;
 exports.createPixPayment = createPixPayment;
 exports.getPaymentStatus = getPaymentStatus;
+exports.getPaymentDetails = getPaymentDetails;
 const mercadopago_1 = require("mercadopago");
 function getMPClient(accessToken) {
     return new mercadopago_1.MercadoPagoConfig({ accessToken });
@@ -35,4 +36,9 @@ async function getPaymentStatus(accessToken, paymentId) {
     const payment = new mercadopago_1.Payment(client);
     const result = await payment.get({ id: paymentId });
     return result.status;
+}
+async function getPaymentDetails(accessToken, paymentId) {
+    const client = getMPClient(accessToken);
+    const payment = new mercadopago_1.Payment(client);
+    return payment.get({ id: paymentId });
 }

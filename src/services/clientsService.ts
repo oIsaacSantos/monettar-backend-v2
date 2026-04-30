@@ -13,7 +13,7 @@ export async function getClientsWithStats(businessId: string) {
     .from("clients")
     .select(`
       id, name, phone,
-      appointments(id, appointment_date, charged_amount, discount, payment_status, services(name))
+      appointments(id, appointment_date, charged_amount, discount, payment_status, services(name), appointment_services(service_id, services(name)))
     `)
     .eq("business_id", businessId)
     .order("name", { ascending: true });
@@ -32,9 +32,14 @@ export async function getClientsWithStats(businessId: string) {
       appointments: sorted.map((a: any) => ({
         id: a.id,
         date: a.appointment_date,
-        service: Array.isArray(a.services)
-          ? (a.services[0]?.name ?? "Serviço não informado")
-          : (a.services?.name ?? "Serviço não informado"),
+        service: (a.appointment_services ?? []).length > 0
+          ? (a.appointment_services ?? [])
+              .map((row: any) => Array.isArray(row.services) ? row.services[0]?.name : row.services?.name)
+              .filter(Boolean)
+              .join(" + ")
+          : (Array.isArray(a.services)
+              ? (a.services[0]?.name ?? "Serviço não informado")
+              : (a.services?.name ?? "Serviço não informado")),
         value: Number(a.charged_amount ?? 0) - Number(a.discount ?? 0),
         status: a.payment_status,
       })),
@@ -44,19 +49,40 @@ export async function getClientsWithStats(businessId: string) {
 
 export async function createClient(
   businessId: string,
-  payload: { name: string; phone: string }
+  payload: { name: string; phone: string; gender?: string | null; birthDate?: string | null }
 ) {
-  const { data, error } = await supabase
-    .from("clients")
-    .insert({
-      business_id: businessId,
-      name: payload.name,
-      phone: payload.phone,
-    })
-    .select()
-    .single();
+  const basePayload = {
+    business_id: businessId,
+    name: payload.name,
+    phone: payload.phone,
+  };
 
-  if (error) throw new Error(error.message);
+  const insertAttempts = [
+    {
+      ...basePayload,
+      gender: payload.gender ?? null,
+      birthdate: payload.birthDate ?? null,
+    },
+    {
+      ...basePayload,
+      gender: payload.gender ?? null,
+      birth_date: payload.birthDate ?? null,
+    },
+    basePayload,
+  ];
 
-  return data;
+  let lastError: string | null = null;
+
+  for (const attempt of insertAttempts) {
+    const { data, error } = await supabase
+      .from("clients")
+      .insert(attempt)
+      .select()
+      .single();
+
+    if (!error) return data;
+    lastError = error.message;
+  }
+
+  throw new Error(lastError ?? "Erro ao criar cliente");
 }

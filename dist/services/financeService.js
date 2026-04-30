@@ -24,6 +24,17 @@ function toSafeNumber(value) {
     const numericValue = Number(value ?? 0);
     return Number.isFinite(numericValue) ? numericValue : 0;
 }
+function getAppointmentServices(appointment) {
+    const linkedServices = (appointment.appointment_services ?? [])
+        .map((row) => Array.isArray(row.services) ? row.services[0] : row.services)
+        .filter(Boolean);
+    if (linkedServices.length > 0)
+        return linkedServices;
+    const service = Array.isArray(appointment.services)
+        ? appointment.services[0]
+        : appointment.services;
+    return service ? [service] : [];
+}
 function normalizeSharePercent(value) {
     const percent = toSafeNumber(value ?? 100);
     if (percent < 0)
@@ -194,16 +205,16 @@ async function calculateServiceTotalCost(serviceId, businessId) {
 }
 async function calculateAppointmentFinancials(appointment, business, operationalCostPerMinute) {
     const revenue = toSafeNumber(appointment.charged_amount) - toSafeNumber(appointment.discount);
-    const service = Array.isArray(appointment.services)
-        ? appointment.services[0]
-        : appointment.services;
-    const serviceId = appointment.service_id;
-    const durationMinutes = toSafeNumber(service?.duration_minutes);
-    let supplyCost = toSafeNumber(service?.material_cost_estimate);
-    if (serviceId) {
+    const services = getAppointmentServices(appointment);
+    const durationMinutes = services.reduce((sum, service) => sum + toSafeNumber(service?.duration_minutes), 0);
+    let supplyCost = services.reduce((sum, service) => sum + toSafeNumber(service?.material_cost_estimate), 0);
+    if (services.length > 0) {
         try {
-            const calculated = await (0, suppliesService_1.calculateServiceSupplyCost)(serviceId, business.id);
-            supplyCost = calculated.cost;
+            const costs = await Promise.all(services
+                .map((service) => service?.id)
+                .filter(Boolean)
+                .map((serviceId) => (0, suppliesService_1.calculateServiceSupplyCost)(serviceId, business.id)));
+            supplyCost = costs.reduce((sum, item) => sum + item.cost, 0);
         }
         catch (err) {
             console.warn("[finance] erro ao calcular insumos do appointment:", err?.message ?? err);
@@ -252,7 +263,8 @@ async function calculateSingleMonthlyFinancialSummary(businessId, month) {
       charged_amount,
       discount,
       payment_status,
-      services(id, duration_minutes, material_cost_estimate)
+      services(id, duration_minutes, material_cost_estimate),
+      appointment_services(service_id, services(id, duration_minutes, material_cost_estimate))
     `)
         .eq("business_id", businessId)
         .gte("appointment_date", range.start)
@@ -342,7 +354,8 @@ async function calculateServiceRanking(businessId, month = (0, date_1.currentMon
       charged_amount,
       discount,
       payment_status,
-      services(id, name, duration_minutes, material_cost_estimate)
+      services(id, name, duration_minutes, material_cost_estimate),
+      appointment_services(service_id, services(id, name, duration_minutes, material_cost_estimate))
     `)
         .eq("business_id", businessId)
         .gte("appointment_date", range.start)
@@ -353,12 +366,15 @@ async function calculateServiceRanking(businessId, month = (0, date_1.currentMon
     const operational = await calculateOperationalCostPerMinute(businessId);
     const serviceMap = new Map();
     for (const appointment of appointments ?? []) {
-        const service = Array.isArray(appointment.services)
-            ? appointment.services[0]
-            : appointment.services;
-        const serviceId = appointment.service_id ?? service?.id ?? null;
-        const key = serviceId ?? "unknown";
-        const serviceName = service?.name ?? "Servico sem nome";
+        const services = getAppointmentServices(appointment);
+        const serviceIds = services.map((service) => service?.id).filter(Boolean);
+        const serviceId = serviceIds.length === 1
+            ? serviceIds[0]
+            : (appointment.service_id ?? null);
+        const key = serviceIds.length > 0 ? serviceIds.join("+") : "unknown";
+        const serviceName = services.length > 0
+            ? services.map((service) => service?.name ?? "Servico sem nome").join(" + ")
+            : "Servico sem nome";
         const financials = await calculateAppointmentFinancials(appointment, business, operational.operationalCostPerMinute);
         if (!serviceMap.has(key)) {
             serviceMap.set(key, {
