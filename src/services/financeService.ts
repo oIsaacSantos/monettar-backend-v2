@@ -12,6 +12,8 @@ const supabase = createClient(
 
 type WorkHoursByDay = Record<string, { start: string; end: string }>;
 
+const MERCADO_PAGO_SIGNAL_FEE_RATE = 0.0099;
+
 function toSafeNumber(value: unknown) {
   const numericValue = Number(value ?? 0);
   return Number.isFinite(numericValue) ? numericValue : 0;
@@ -36,6 +38,29 @@ function timeToMinutes(time: string) {
 function getDaysInMonth(month: string) {
   const [year, monthNumber] = month.split("-").map(Number);
   return new Date(year, monthNumber, 0).getDate();
+}
+
+function getMonthRange(month: string) {
+  if (!/^\d{4}-\d{2}$/.test(month)) {
+    throw new Error("Mes invalido. Use o formato YYYY-MM.");
+  }
+
+  const [year, monthNumber] = month.split("-").map(Number);
+  const lastDay = new Date(year, monthNumber, 0).getDate();
+  return {
+    start: `${month}-01`,
+    end: `${month}-${String(lastDay).padStart(2, "0")}`,
+  };
+}
+
+function getPreviousMonth(month: string) {
+  if (!/^\d{4}-\d{2}$/.test(month)) {
+    throw new Error("Mes invalido. Use o formato YYYY-MM.");
+  }
+
+  const [year, monthNumber] = month.split("-").map(Number);
+  const previous = new Date(Date.UTC(year, monthNumber - 2, 1, 12));
+  return `${previous.getUTCFullYear()}-${String(previous.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
 function getDayOfWeek(date: string) {
@@ -68,6 +93,43 @@ function getLunchMinutes(business: any, workStart: number, workEnd: number) {
   const overlapStart = Math.max(workStart, lunchStart);
   const overlapEnd = Math.min(workEnd, lunchEnd);
   return Math.max(0, overlapEnd - overlapStart);
+}
+
+function calculateSignalAmount(appointment: any, business: any) {
+  const revenue = toSafeNumber(appointment.charged_amount) - toSafeNumber(appointment.discount);
+  const service = Array.isArray(appointment.services)
+    ? appointment.services[0]
+    : appointment.services;
+  const durationMinutes = toSafeNumber(service?.duration_minutes);
+  const signalType = String(business?.signal_type ?? "fixed");
+
+  if (signalType === "percentage" || signalType === "percent") {
+    return revenue * (toSafeNumber(business?.signal_value) / 100);
+  }
+
+  if (signalType === "duration") {
+    const baseValue = toSafeNumber(business?.signal_base_value ?? 20);
+    const per30Minutes = toSafeNumber(business?.signal_per_30min ?? 10);
+    const extraBlocks = Math.ceil(Math.max(0, durationMinutes - 60) / 30);
+    return baseValue + extraBlocks * per30Minutes;
+  }
+
+  return toSafeNumber(business?.signal_value ?? 20);
+}
+
+function emptyMonthlySummary(month: string) {
+  return {
+    month,
+    revenue: 0,
+    supplyCost: 0,
+    operationalCost: 0,
+    mercadoPagoFees: 0,
+    totalCost: 0,
+    profit: 0,
+    margin: 0,
+    appointmentsCount: 0,
+    averageTicket: 0,
+  };
 }
 
 export async function calculateMonthlyOperationalCost(businessId: string) {
@@ -156,5 +218,123 @@ export async function calculateServiceTotalCost(serviceId: string, businessId: s
     totalCost: supplyCost.cost + operationalCost,
     supplyCostSource: supplyCost.source,
     supplyBreakdown: supplyCost.breakdown,
+  };
+}
+
+export async function calculateAppointmentFinancials(
+  appointment: any,
+  business: any,
+  operationalCostPerMinute?: number
+) {
+  const revenue = toSafeNumber(appointment.charged_amount) - toSafeNumber(appointment.discount);
+  const service = Array.isArray(appointment.services)
+    ? appointment.services[0]
+    : appointment.services;
+  const serviceId = appointment.service_id as string | null;
+  const durationMinutes = toSafeNumber(service?.duration_minutes);
+
+  let supplyCost = toSafeNumber(service?.material_cost_estimate);
+  if (serviceId) {
+    try {
+      const calculated = await calculateServiceSupplyCost(serviceId, business.id);
+      supplyCost = calculated.cost;
+    } catch (err: any) {
+      console.warn("[finance] erro ao calcular insumos do appointment:", err?.message ?? err);
+    }
+  }
+
+  const costPerMinute = operationalCostPerMinute
+    ?? (await calculateOperationalCostPerMinute(business.id)).operationalCostPerMinute;
+  const operationalCost = durationMinutes * costPerMinute;
+  const signalAmount = calculateSignalAmount(appointment, business);
+  const mercadoPagoFee = signalAmount * MERCADO_PAGO_SIGNAL_FEE_RATE;
+  const totalCost = supplyCost + operationalCost + mercadoPagoFee;
+  const profit = revenue - totalCost;
+
+  return {
+    revenue,
+    supplyCost,
+    operationalCost,
+    signalAmount,
+    mercadoPagoFee,
+    totalCost,
+    profit,
+    margin: revenue > 0 ? (profit / revenue) * 100 : 0,
+  };
+}
+
+async function calculateSingleMonthlyFinancialSummary(businessId: string, month: string) {
+  const range = getMonthRange(month);
+  const { data: business, error: businessError } = await supabase
+    .from("businesses")
+    .select("id, signal_type, signal_value, signal_base_value, signal_per_30min")
+    .eq("id", businessId)
+    .single();
+
+  if (businessError) throw new Error(businessError.message);
+
+  const { data: appointments, error: appointmentsError } = await supabase
+    .from("appointments")
+    .select(`
+      id,
+      service_id,
+      appointment_date,
+      charged_amount,
+      discount,
+      payment_status,
+      services(id, duration_minutes, material_cost_estimate)
+    `)
+    .eq("business_id", businessId)
+    .gte("appointment_date", range.start)
+    .lte("appointment_date", range.end)
+    .not("payment_status", "in", '("cancelled","no_show")');
+
+  if (appointmentsError) throw new Error(appointmentsError.message);
+
+  const operational = await calculateOperationalCostPerMinute(businessId);
+  const summary = emptyMonthlySummary(month);
+
+  for (const appointment of appointments ?? []) {
+    const financials = await calculateAppointmentFinancials(
+      appointment,
+      business,
+      operational.operationalCostPerMinute
+    );
+
+    summary.revenue += financials.revenue;
+    summary.supplyCost += financials.supplyCost;
+    summary.operationalCost += financials.operationalCost;
+    summary.mercadoPagoFees += financials.mercadoPagoFee;
+    summary.totalCost += financials.totalCost;
+    summary.profit += financials.profit;
+    summary.appointmentsCount += 1;
+  }
+
+  summary.margin = summary.revenue > 0 ? (summary.profit / summary.revenue) * 100 : 0;
+  summary.averageTicket = summary.appointmentsCount > 0
+    ? summary.revenue / summary.appointmentsCount
+    : 0;
+
+  return summary;
+}
+
+export async function calculateMonthlyFinancialSummary(businessId: string, month = currentMonthBRT()) {
+  const current = await calculateSingleMonthlyFinancialSummary(businessId, month);
+  const previous = await calculateSingleMonthlyFinancialSummary(businessId, getPreviousMonth(month));
+
+  return {
+    ...current,
+    previousMonth: {
+      month: previous.month,
+      revenue: previous.revenue,
+      supplyCost: previous.supplyCost,
+      operationalCost: previous.operationalCost,
+      mercadoPagoFees: previous.mercadoPagoFees,
+      totalCost: previous.totalCost,
+      profit: previous.profit,
+      margin: previous.margin,
+      appointmentsCount: previous.appointmentsCount,
+      averageTicket: previous.averageTicket,
+    },
   };
 }

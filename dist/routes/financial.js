@@ -1,0 +1,22 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.financialRouter = void 0;
+const express_1 = require("express");
+const date_1 = require("../utils/date");
+const financeService_1 = require("../services/financeService");
+exports.financialRouter = (0, express_1.Router)();
+exports.financialRouter.get("/month-summary", async (req, res) => {
+    const businessId = req.query.businessId;
+    const month = req.query.month ?? (0, date_1.currentMonthBRT)();
+    if (!businessId) {
+        res.status(400).json({ error: "businessId obrigatorio" });
+        return;
+    }
+    try {
+        const summary = await (0, financeService_1.calculateMonthlyFinancialSummary)(businessId, month);
+        res.json(summary);
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
