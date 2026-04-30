@@ -23,31 +23,41 @@ suppliesRouter.get("/", async (req: Request, res: Response) => {
 });
 
 suppliesRouter.post("/", async (req: Request, res: Response) => {
-  const { businessId, name, unit, costPerUnit } = req.body;
-  if (!businessId || !name) {
-    res.status(400).json({ error: "businessId e name obrigatorios" });
-    return;
-  }
-
-  try {
-    res.status(201).json(await createSupply(businessId, { name, unit, costPerUnit }));
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-suppliesRouter.put("/:id", async (req: Request, res: Response) => {
-  const { id } = req.params;
-  const { businessId, name, unit, costPerUnit } = req.body;
+  const { businessId, name, unit, total_cost_paid, totalCostPaid, package_quantity, packageQuantity } = req.body;
   if (!businessId) {
     res.status(400).json({ error: "businessId obrigatorio" });
     return;
   }
 
   try {
-    res.json(await updateSupply(id, businessId, { name, unit, costPerUnit }));
+    res.status(201).json(await createSupply(businessId, {
+      name,
+      unit,
+      totalCostPaid: totalCostPaid ?? total_cost_paid,
+      packageQuantity: packageQuantity ?? package_quantity,
+    }));
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    res.status(400).json({ error: err.message });
+  }
+});
+
+suppliesRouter.put("/:id", async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { businessId, name, unit, total_cost_paid, totalCostPaid, package_quantity, packageQuantity } = req.body;
+  if (!businessId) {
+    res.status(400).json({ error: "businessId obrigatorio" });
+    return;
+  }
+
+  try {
+    res.json(await updateSupply(id, businessId, {
+      name,
+      unit,
+      totalCostPaid: totalCostPaid ?? total_cost_paid,
+      packageQuantity: packageQuantity ?? package_quantity,
+    }));
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
   }
 });
 

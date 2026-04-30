@@ -3,10 +3,18 @@ create table if not exists supplies (
   business_id uuid not null references businesses(id) on delete cascade,
   name text not null,
   unit text not null default 'unidade',
+  total_cost_paid numeric(12, 4) not null default 0,
+  package_quantity numeric(12, 4) not null default 1,
   cost_per_unit numeric(12, 4) not null default 0,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table supplies
+add column if not exists total_cost_paid numeric(12, 4) not null default 0;
+
+alter table supplies
+add column if not exists package_quantity numeric(12, 4) not null default 1;
 
 create table if not exists service_supplies (
   id uuid primary key default gen_random_uuid(),

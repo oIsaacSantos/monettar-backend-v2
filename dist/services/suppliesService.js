@@ -19,6 +19,28 @@ function toSafeNumber(value) {
     const numberValue = Number(value ?? 0);
     return Number.isFinite(numberValue) ? numberValue : 0;
 }
+function validateSupplyInput(payload) {
+    const name = payload.name?.trim();
+    if (!name)
+        throw new Error("Nome do insumo e obrigatorio.");
+    if (!payload.unit)
+        throw new Error("Unidade do insumo e obrigatoria.");
+    const totalCostPaid = toSafeNumber(payload.totalCostPaid);
+    const packageQuantity = toSafeNumber(payload.packageQuantity);
+    if (totalCostPaid < 0) {
+        throw new Error("Valor total pago deve ser maior ou igual a zero.");
+    }
+    if (packageQuantity <= 0) {
+        throw new Error("Quantidade comprada deve ser maior que zero.");
+    }
+    return {
+        name,
+        unit: normalizeUnit(payload.unit),
+        totalCostPaid,
+        packageQuantity,
+        costPerUnit: totalCostPaid / packageQuantity,
+    };
+}
 function normalizeUnit(unit) {
     const allowed = ["unidade", "g", "ml", "pacote", "cm", "outro"];
     return allowed.includes(unit) ? unit : "outro";
@@ -47,50 +69,65 @@ function mapServiceSupply(row) {
 async function getSupplies(businessId) {
     const { data, error } = await supabase
         .from("supplies")
-        .select("id, business_id, name, unit, cost_per_unit, created_at")
+        .select("id, business_id, name, unit, total_cost_paid, package_quantity, cost_per_unit, created_at")
         .eq("business_id", businessId)
         .order("name", { ascending: true });
     if (error)
         throw new Error(error.message);
     return (data ?? []).map((s) => ({
         ...s,
+        total_cost_paid: toSafeNumber(s.total_cost_paid),
+        package_quantity: toSafeNumber(s.package_quantity),
         cost_per_unit: toSafeNumber(s.cost_per_unit),
     }));
 }
 async function createSupply(businessId, payload) {
+    const validated = validateSupplyInput(payload);
     const { data, error } = await supabase
         .from("supplies")
         .insert({
         business_id: businessId,
-        name: payload.name.trim(),
-        unit: normalizeUnit(payload.unit),
-        cost_per_unit: toSafeNumber(payload.costPerUnit),
+        name: validated.name,
+        unit: validated.unit,
+        total_cost_paid: validated.totalCostPaid,
+        package_quantity: validated.packageQuantity,
+        cost_per_unit: validated.costPerUnit,
     })
-        .select("id, business_id, name, unit, cost_per_unit, created_at")
+        .select("id, business_id, name, unit, total_cost_paid, package_quantity, cost_per_unit, created_at")
         .single();
     if (error)
         throw new Error(error.message);
-    return { ...data, cost_per_unit: toSafeNumber(data.cost_per_unit) };
+    return {
+        ...data,
+        total_cost_paid: toSafeNumber(data.total_cost_paid),
+        package_quantity: toSafeNumber(data.package_quantity),
+        cost_per_unit: toSafeNumber(data.cost_per_unit),
+    };
 }
 async function updateSupply(id, businessId, payload) {
-    const updatePayload = {};
-    if (payload.name !== undefined)
-        updatePayload.name = payload.name.trim();
-    if (payload.unit !== undefined)
-        updatePayload.unit = normalizeUnit(payload.unit);
-    if (payload.costPerUnit !== undefined) {
-        updatePayload.cost_per_unit = toSafeNumber(payload.costPerUnit);
-    }
+    const validated = validateSupplyInput(payload);
+    const updatePayload = {
+        name: validated.name,
+        unit: validated.unit,
+        total_cost_paid: validated.totalCostPaid,
+        package_quantity: validated.packageQuantity,
+        cost_per_unit: validated.costPerUnit,
+    };
     const { data, error } = await supabase
         .from("supplies")
         .update(updatePayload)
         .eq("id", id)
         .eq("business_id", businessId)
-        .select("id, business_id, name, unit, cost_per_unit, created_at")
+        .select("id, business_id, name, unit, total_cost_paid, package_quantity, cost_per_unit, created_at")
         .single();
     if (error)
         throw new Error(error.message);
-    return { ...data, cost_per_unit: toSafeNumber(data.cost_per_unit) };
+    return {
+        ...data,
+        total_cost_paid: toSafeNumber(data.total_cost_paid),
+        package_quantity: toSafeNumber(data.package_quantity),
+        cost_per_unit: toSafeNumber(data.cost_per_unit),
+    };
 }
 async function deleteSupply(id, businessId) {
     const { error } = await supabase
