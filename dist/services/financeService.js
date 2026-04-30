@@ -100,6 +100,12 @@ function emptyMonthlySummary(month) {
         margin: 0,
         appointmentsCount: 0,
         averageTicket: 0,
+        breakdown: {
+            suppliesCost: 0,
+            operationalCost: 0,
+            mercadoPagoFees: 0,
+            fixedCosts: 0,
+        },
     };
 }
 async function calculateMonthlyOperationalCost(businessId) {
@@ -261,6 +267,13 @@ async function calculateSingleMonthlyFinancialSummary(businessId, month) {
     summary.averageTicket = summary.appointmentsCount > 0
         ? summary.revenue / summary.appointmentsCount
         : 0;
+    summary.totalCost = summary.supplyCost + summary.operationalCost + summary.mercadoPagoFees;
+    summary.breakdown = {
+        suppliesCost: summary.supplyCost,
+        operationalCost: summary.operationalCost,
+        mercadoPagoFees: summary.mercadoPagoFees,
+        fixedCosts: operational.monthlyOperationalCost,
+    };
     return summary;
 }
 async function calculateMonthlyFinancialSummary(businessId, month = (0, date_1.currentMonthBRT)()) {
@@ -279,6 +292,7 @@ async function calculateMonthlyFinancialSummary(businessId, month = (0, date_1.c
             margin: previous.margin,
             appointmentsCount: previous.appointmentsCount,
             averageTicket: previous.averageTicket,
+            breakdown: previous.breakdown,
         },
     };
 }
