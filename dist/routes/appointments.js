@@ -6,8 +6,9 @@ const appointmentsService_1 = require("../services/appointmentsService");
 const schedulingService_1 = require("../services/schedulingService");
 exports.appointmentsRouter = (0, express_1.Router)();
 exports.appointmentsRouter.post("/", async (req, res) => {
-    const { businessId, serviceId, clientId, appointmentDate, startTime, endTime, chargedAmount, status, notes } = req.body;
-    if (!businessId || !serviceId || !clientId || !appointmentDate || !startTime || !endTime) {
+    const { businessId, serviceId, serviceIds, clientId, appointmentDate, startTime, endTime, chargedAmount, status, notes } = req.body;
+    const primaryServiceId = (Array.isArray(serviceIds) && serviceIds.length > 0) ? serviceIds[0] : serviceId;
+    if (!businessId || !primaryServiceId || !clientId || !appointmentDate || !startTime || !endTime) {
         res.status(400).json({ error: "businessId, serviceId, clientId, appointmentDate, startTime e endTime são obrigatórios" });
         return;
     }
@@ -17,7 +18,14 @@ exports.appointmentsRouter.post("/", async (req, res) => {
             res.status(409).json({ error: validation.reason });
             return;
         }
-        const data = await (0, appointmentsService_1.createAppointment)({ businessId, serviceId, clientId, appointmentDate, startTime, endTime, chargedAmount: Number(chargedAmount) || 0, status: status ?? "pending", notes });
+        const data = await (0, appointmentsService_1.createAppointment)({
+            businessId,
+            serviceId: primaryServiceId,
+            serviceIds: Array.isArray(serviceIds) ? serviceIds : undefined,
+            clientId, appointmentDate, startTime, endTime,
+            chargedAmount: Number(chargedAmount) || 0,
+            status: status ?? "pending", notes,
+        });
         res.status(201).json(data);
     }
     catch (err) {

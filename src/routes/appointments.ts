@@ -5,8 +5,9 @@ import { getAvailableSlots, validateAppointmentSlot } from "../services/scheduli
 export const appointmentsRouter = Router();
 
 appointmentsRouter.post("/", async (req: Request, res: Response) => {
-  const { businessId, serviceId, clientId, appointmentDate, startTime, endTime, chargedAmount, status, notes } = req.body;
-  if (!businessId || !serviceId || !clientId || !appointmentDate || !startTime || !endTime) {
+  const { businessId, serviceId, serviceIds, clientId, appointmentDate, startTime, endTime, chargedAmount, status, notes } = req.body;
+  const primaryServiceId = (Array.isArray(serviceIds) && serviceIds.length > 0) ? serviceIds[0] : serviceId;
+  if (!businessId || !primaryServiceId || !clientId || !appointmentDate || !startTime || !endTime) {
     res.status(400).json({ error: "businessId, serviceId, clientId, appointmentDate, startTime e endTime são obrigatórios" });
     return;
   }
@@ -16,7 +17,14 @@ appointmentsRouter.post("/", async (req: Request, res: Response) => {
       res.status(409).json({ error: validation.reason });
       return;
     }
-    const data = await createAppointment({ businessId, serviceId, clientId, appointmentDate, startTime, endTime, chargedAmount: Number(chargedAmount) || 0, status: status ?? "pending", notes });
+    const data = await createAppointment({
+      businessId,
+      serviceId: primaryServiceId,
+      serviceIds: Array.isArray(serviceIds) ? serviceIds : undefined,
+      clientId, appointmentDate, startTime, endTime,
+      chargedAmount: Number(chargedAmount) || 0,
+      status: status ?? "pending", notes,
+    });
     res.status(201).json(data);
   } catch (err: any) {
     res.status(500).json({ error: err.message });

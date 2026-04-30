@@ -72,6 +72,7 @@ async function replaceAppointmentServices(
 export async function createAppointment(payload: {
   businessId: string;
   serviceId: string;
+  serviceIds?: string[];
   clientId: string;
   appointmentDate: string;
   startTime: string;
@@ -80,12 +81,15 @@ export async function createAppointment(payload: {
   status: string;
   notes?: string | null;
 }) {
+  const primaryServiceId = payload.serviceIds?.length ? payload.serviceIds[0] : payload.serviceId;
+  const idsToLink = payload.serviceIds?.length ? payload.serviceIds : [payload.serviceId];
+
   const { data, error } = await supabase
     .from("appointments")
     .insert({
       business_id: payload.businessId,
       client_id: payload.clientId,
-      service_id: payload.serviceId,
+      service_id: primaryServiceId,
       appointment_date: payload.appointmentDate,
       start_time: payload.startTime,
       end_time: payload.endTime,
@@ -99,7 +103,19 @@ export async function createAppointment(payload: {
     .single();
 
   if (error) throw new Error(error.message);
-  await replaceAppointmentServices(data.id, [{ service_id: payload.serviceId }]);
+
+  const { data: servicesData } = await supabase
+    .from("services")
+    .select("id, current_price, duration_minutes")
+    .in("id", idsToLink);
+
+  const snapshots: AppointmentServiceSnapshot[] = (servicesData ?? []).map((s: any) => ({
+    service_id: s.id,
+    price: s.current_price ?? null,
+    duration_minutes: s.duration_minutes ?? null,
+  }));
+
+  await replaceAppointmentServices(data.id, snapshots.length ? snapshots : [{ service_id: primaryServiceId }]);
   return data;
 }
 
@@ -108,6 +124,7 @@ export async function updateAppointment(
   businessId: string,
   payload: {
     serviceId?: string;
+    serviceIds?: string[];
     date?: string;
     startTime?: string;
     endTime?: string;
@@ -116,10 +133,12 @@ export async function updateAppointment(
     notes?: string;
   }
 ) {
+  const primaryServiceId = payload.serviceIds?.length ? payload.serviceIds[0] : payload.serviceId;
+
   const { data, error } = await supabase
     .from("appointments")
     .update({
-      service_id: payload.serviceId,
+      service_id: primaryServiceId,
       appointment_date: payload.date,
       start_time: payload.startTime,
       end_time: payload.endTime,
@@ -132,9 +151,22 @@ export async function updateAppointment(
     .select()
     .single();
   if (error) throw new Error(error.message);
-  if (payload.serviceId) {
+
+  if (payload.serviceIds?.length) {
+    const { data: servicesData } = await supabase
+      .from("services")
+      .select("id, current_price, duration_minutes")
+      .in("id", payload.serviceIds);
+    const snapshots: AppointmentServiceSnapshot[] = (servicesData ?? []).map((s: any) => ({
+      service_id: s.id,
+      price: s.current_price ?? null,
+      duration_minutes: s.duration_minutes ?? null,
+    }));
+    await replaceAppointmentServices(id, snapshots.length ? snapshots : [{ service_id: primaryServiceId! }]);
+  } else if (payload.serviceId) {
     await replaceAppointmentServices(id, [{ service_id: payload.serviceId }]);
   }
+
   return data;
 }
 
