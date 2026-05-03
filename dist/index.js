@@ -18,6 +18,7 @@ const booking_1 = require("./routes/booking");
 const payments_1 = require("./routes/payments");
 const auth_1 = require("./routes/auth");
 const bookingLeads_1 = require("./routes/bookingLeads");
+const version_1 = require("./routes/version");
 const packages_1 = require("./routes/packages");
 const cron_1 = require("./routes/cron");
 const scheduleOverrides_1 = require("./routes/scheduleOverrides");
@@ -52,6 +53,7 @@ app.use("/api/business", auth_2.requireBusinessAccess, business_1.businessRouter
 app.use("/api/schedule-overrides", auth_2.requireBusinessAccess, scheduleOverrides_1.scheduleOverridesRouter);
 app.use("/api/booking", publicBookingRateLimit, booking_1.bookingRouter);
 app.use("/api/booking-leads", bookingLeads_1.bookingLeadsRouter);
+app.use("/api/version", version_1.versionRouter);
 app.use("/api/payments", payments_1.paymentsRouter);
 app.use("/api/auth", auth_1.authRouter);
 app.use("/api/packages", auth_2.requireBusinessAccess, packages_1.packagesRouter);
