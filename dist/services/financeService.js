@@ -18,6 +18,7 @@ const supabase_js_1 = require("@supabase/supabase-js");
 const date_1 = require("../utils/date");
 const signal_1 = require("../utils/signal");
 const suppliesService_1 = require("./suppliesService");
+const appointmentsService_1 = require("./appointmentsService");
 const supabase = (0, supabase_js_1.createClient)(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 const MERCADO_PAGO_SIGNAL_FEE_RATE = 0.0099;
 function toSafeNumber(value) {
@@ -246,6 +247,7 @@ async function calculateAppointmentFinancials(appointment, business, operational
     };
 }
 async function calculateSingleMonthlyFinancialSummary(businessId, month) {
+    await (0, appointmentsService_1.autoConfirmPassedAppointments)(businessId);
     const range = getMonthRange(month);
     const { data: business, error: businessError } = await supabase
         .from("businesses")
@@ -269,7 +271,7 @@ async function calculateSingleMonthlyFinancialSummary(businessId, month) {
         .eq("business_id", businessId)
         .gte("appointment_date", range.start)
         .lte("appointment_date", range.end)
-        .not("payment_status", "in", '("cancelled","no_show")');
+        .in("payment_status", ["confirmed", "paid"]);
     if (appointmentsError)
         throw new Error(appointmentsError.message);
     const operational = await calculateOperationalCostPerMinute(businessId);
@@ -337,6 +339,7 @@ async function calculateMonthlyFinancialEvolution(businessId, months = 6) {
     return result;
 }
 async function calculateServiceRanking(businessId, month = (0, date_1.currentMonthBRT)()) {
+    await (0, appointmentsService_1.autoConfirmPassedAppointments)(businessId);
     const range = getMonthRange(month);
     const { data: business, error: businessError } = await supabase
         .from("businesses")
@@ -360,7 +363,7 @@ async function calculateServiceRanking(businessId, month = (0, date_1.currentMon
         .eq("business_id", businessId)
         .gte("appointment_date", range.start)
         .lte("appointment_date", range.end)
-        .not("payment_status", "in", '("cancelled","no_show")');
+        .in("payment_status", ["confirmed", "paid"]);
     if (appointmentsError)
         throw new Error(appointmentsError.message);
     const operational = await calculateOperationalCostPerMinute(businessId);

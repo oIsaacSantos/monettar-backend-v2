@@ -278,7 +278,10 @@ function curateBookingSlots(slots, date, sessionSeed) {
     result.sort();
     return result;
 }
-async function validateAppointmentSlot(businessId, date, startTime, endTime, excludeAppointmentId) {
+async function validateAppointmentSlot(businessId, date, startTime, endTime, excludeAppointmentId, forceOverride = false) {
+    if (!isValidTime(startTime) || !isValidTime(endTime)) {
+        return { valid: false, reason: "Horário inválido." };
+    }
     const startMins = timeToMinutes(startTime);
     const endMins = timeToMinutes(endTime);
     if (endMins <= startMins) {
@@ -289,6 +292,12 @@ async function validateAppointmentSlot(businessId, date, startTime, endTime, exc
         .select("work_start_time, work_end_time, work_days_of_week, work_hours_by_day, lunch_break_active, lunch_start_time, lunch_end_time, appointment_buffer_minutes")
         .eq("id", businessId)
         .single();
+    if (!business) {
+        return { valid: false, reason: "Negócio não encontrado." };
+    }
+    if (forceOverride) {
+        return { valid: true };
+    }
     const workDays = business?.work_days_of_week ?? [1, 2, 3, 4, 5, 6];
     const targetDayOfWeek = getTargetDayOfWeek(date);
     const { workStart, workEnd } = getWorkRange(business, targetDayOfWeek);

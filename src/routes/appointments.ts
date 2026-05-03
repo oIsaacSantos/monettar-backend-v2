@@ -5,14 +5,21 @@ import { getAvailableSlots, validateAppointmentSlot } from "../services/scheduli
 export const appointmentsRouter = Router();
 
 appointmentsRouter.post("/", async (req: Request, res: Response) => {
-  const { businessId, serviceId, serviceIds, clientId, appointmentDate, startTime, endTime, chargedAmount, status, notes } = req.body;
+  const { businessId, serviceId, serviceIds, clientId, appointmentDate, startTime, endTime, chargedAmount, status, notes, forceScheduleOverride } = req.body;
   const primaryServiceId = (Array.isArray(serviceIds) && serviceIds.length > 0) ? serviceIds[0] : serviceId;
   if (!businessId || !primaryServiceId || !clientId || !appointmentDate || !startTime || !endTime) {
     res.status(400).json({ error: "businessId, serviceId, clientId, appointmentDate, startTime e endTime são obrigatórios" });
     return;
   }
   try {
-    const validation = await validateAppointmentSlot(businessId, appointmentDate, startTime, endTime);
+    const validation = await validateAppointmentSlot(
+      businessId,
+      appointmentDate,
+      startTime,
+      endTime,
+      undefined,
+      Boolean(forceScheduleOverride)
+    );
     if (!validation.valid) {
       res.status(409).json({ error: validation.reason });
       return;
@@ -21,9 +28,13 @@ appointmentsRouter.post("/", async (req: Request, res: Response) => {
       businessId,
       serviceId: primaryServiceId,
       serviceIds: Array.isArray(serviceIds) ? serviceIds : undefined,
-      clientId, appointmentDate, startTime, endTime,
+      clientId,
+      appointmentDate,
+      startTime,
+      endTime,
       chargedAmount: Number(chargedAmount) || 0,
-      status: status ?? "pending", notes,
+      status: status ?? "pending",
+      notes,
     });
     res.status(201).json(data);
   } catch (err: any) {
@@ -34,11 +45,18 @@ appointmentsRouter.post("/", async (req: Request, res: Response) => {
 appointmentsRouter.put("/:id", async (req: Request, res: Response) => {
   const { businessId } = req.query;
   const { id } = req.params;
+  const { date, startTime, endTime, forceScheduleOverride } = req.body;
   if (!businessId) { res.status(400).json({ error: "businessId obrigatório" }); return; }
-  const { date, startTime, endTime } = req.body;
   if (date && startTime && endTime) {
     try {
-      const validation = await validateAppointmentSlot(businessId as string, date, startTime, endTime, id);
+      const validation = await validateAppointmentSlot(
+        businessId as string,
+        date,
+        startTime,
+        endTime,
+        id,
+        Boolean(forceScheduleOverride)
+      );
       if (!validation.valid) {
         res.status(409).json({ error: validation.reason });
         return;

@@ -379,8 +379,13 @@ export async function validateAppointmentSlot(
   date: string,
   startTime: string,
   endTime: string,
-  excludeAppointmentId?: string
+  excludeAppointmentId?: string,
+  forceOverride: boolean = false
 ): Promise<{ valid: boolean; reason?: string }> {
+  if (!isValidTime(startTime) || !isValidTime(endTime)) {
+    return { valid: false, reason: "Horário inválido." };
+  }
+
   const startMins = timeToMinutes(startTime);
   const endMins = timeToMinutes(endTime);
 
@@ -393,6 +398,14 @@ export async function validateAppointmentSlot(
     .select("work_start_time, work_end_time, work_days_of_week, work_hours_by_day, lunch_break_active, lunch_start_time, lunch_end_time, appointment_buffer_minutes")
     .eq("id", businessId)
     .single();
+
+  if (!business) {
+    return { valid: false, reason: "Negócio não encontrado." };
+  }
+
+  if (forceOverride) {
+    return { valid: true };
+  }
 
   const workDays: number[] = (business?.work_days_of_week as number[] | null) ?? [1, 2, 3, 4, 5, 6];
   const targetDayOfWeek = getTargetDayOfWeek(date);

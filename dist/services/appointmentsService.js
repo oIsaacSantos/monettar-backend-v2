@@ -8,10 +8,12 @@ exports.updateAppointment = updateAppointment;
 exports.deleteAppointment = deleteAppointment;
 exports.getAllAppointments = getAllAppointments;
 exports.getAppointmentsByMonth = getAppointmentsByMonth;
+exports.autoConfirmPassedAppointments = autoConfirmPassedAppointments;
 exports.getAppointmentsByDate = getAppointmentsByDate;
 const supabase_js_1 = require("@supabase/supabase-js");
 const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
+const date_1 = require("../utils/date");
 const supabase = (0, supabase_js_1.createClient)(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 function normalizePaymentStatus(status) {
     return status === "paid" ? "confirmed" : (status ?? "pending");
@@ -195,6 +197,34 @@ async function getAppointmentsByMonth(businessId, year, month) {
         ...a,
         clients: Array.isArray(a.clients) ? (a.clients[0] ?? null) : a.clients,
     }));
+}
+async function autoConfirmPassedAppointments(businessId) {
+    const nowUTC = Date.now();
+    const todayStr = (0, date_1.todayBRT)();
+    const { data: candidates } = await supabase
+        .from("appointments")
+        .select("id, appointment_date, end_time")
+        .eq("business_id", businessId)
+        .eq("payment_status", "pending")
+        .lte("appointment_date", todayStr);
+    if (!candidates?.length)
+        return;
+    const idsToConfirm = candidates
+        .filter((a) => {
+        const [year, month, day] = a.appointment_date.split("-").map(Number);
+        const [h, m] = a.end_time
+            ? a.end_time.slice(0, 5).split(":").map(Number)
+            : [23, 59];
+        // BRT h:m = UTC (h+3):m — Date.UTC handles hour overflow
+        return Date.UTC(year, month - 1, day, h + 3, m, 0) <= nowUTC;
+    })
+        .map((a) => a.id);
+    if (!idsToConfirm.length)
+        return;
+    await supabase
+        .from("appointments")
+        .update({ payment_status: "confirmed" })
+        .in("id", idsToConfirm);
 }
 async function getAppointmentsByDate(businessId, date) {
     const { data, error } = await supabase

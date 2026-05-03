@@ -5,6 +5,7 @@ import { createClient } from "@supabase/supabase-js";
 import { currentMonthBRT } from "../utils/date";
 import { calculateSignalAmount } from "../utils/signal";
 import { calculateServiceSupplyCost } from "./suppliesService";
+import { autoConfirmPassedAppointments } from "./appointmentsService";
 
 const supabase = createClient(
   process.env.SUPABASE_URL!,
@@ -299,6 +300,7 @@ export async function calculateAppointmentFinancials(
 }
 
 async function calculateSingleMonthlyFinancialSummary(businessId: string, month: string) {
+  await autoConfirmPassedAppointments(businessId);
   const range = getMonthRange(month);
   const { data: business, error: businessError } = await supabase
     .from("businesses")
@@ -323,7 +325,7 @@ async function calculateSingleMonthlyFinancialSummary(businessId: string, month:
     .eq("business_id", businessId)
     .gte("appointment_date", range.start)
     .lte("appointment_date", range.end)
-    .not("payment_status", "in", '("cancelled","no_show")');
+    .in("payment_status", ["confirmed", "paid"]);
 
   if (appointmentsError) throw new Error(appointmentsError.message);
 
@@ -406,6 +408,7 @@ export async function calculateMonthlyFinancialEvolution(businessId: string, mon
 }
 
 export async function calculateServiceRanking(businessId: string, month = currentMonthBRT()) {
+  await autoConfirmPassedAppointments(businessId);
   const range = getMonthRange(month);
   const { data: business, error: businessError } = await supabase
     .from("businesses")
@@ -430,7 +433,7 @@ export async function calculateServiceRanking(businessId: string, month = curren
     .eq("business_id", businessId)
     .gte("appointment_date", range.start)
     .lte("appointment_date", range.end)
-    .not("payment_status", "in", '("cancelled","no_show")');
+    .in("payment_status", ["confirmed", "paid"]);
 
   if (appointmentsError) throw new Error(appointmentsError.message);
 

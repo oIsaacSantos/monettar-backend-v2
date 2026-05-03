@@ -6,14 +6,14 @@ const appointmentsService_1 = require("../services/appointmentsService");
 const schedulingService_1 = require("../services/schedulingService");
 exports.appointmentsRouter = (0, express_1.Router)();
 exports.appointmentsRouter.post("/", async (req, res) => {
-    const { businessId, serviceId, serviceIds, clientId, appointmentDate, startTime, endTime, chargedAmount, status, notes } = req.body;
+    const { businessId, serviceId, serviceIds, clientId, appointmentDate, startTime, endTime, chargedAmount, status, notes, forceScheduleOverride } = req.body;
     const primaryServiceId = (Array.isArray(serviceIds) && serviceIds.length > 0) ? serviceIds[0] : serviceId;
     if (!businessId || !primaryServiceId || !clientId || !appointmentDate || !startTime || !endTime) {
         res.status(400).json({ error: "businessId, serviceId, clientId, appointmentDate, startTime e endTime são obrigatórios" });
         return;
     }
     try {
-        const validation = await (0, schedulingService_1.validateAppointmentSlot)(businessId, appointmentDate, startTime, endTime);
+        const validation = await (0, schedulingService_1.validateAppointmentSlot)(businessId, appointmentDate, startTime, endTime, undefined, Boolean(forceScheduleOverride));
         if (!validation.valid) {
             res.status(409).json({ error: validation.reason });
             return;
@@ -22,9 +22,13 @@ exports.appointmentsRouter.post("/", async (req, res) => {
             businessId,
             serviceId: primaryServiceId,
             serviceIds: Array.isArray(serviceIds) ? serviceIds : undefined,
-            clientId, appointmentDate, startTime, endTime,
+            clientId,
+            appointmentDate,
+            startTime,
+            endTime,
             chargedAmount: Number(chargedAmount) || 0,
-            status: status ?? "pending", notes,
+            status: status ?? "pending",
+            notes,
         });
         res.status(201).json(data);
     }
@@ -35,14 +39,14 @@ exports.appointmentsRouter.post("/", async (req, res) => {
 exports.appointmentsRouter.put("/:id", async (req, res) => {
     const { businessId } = req.query;
     const { id } = req.params;
+    const { date, startTime, endTime, forceScheduleOverride } = req.body;
     if (!businessId) {
         res.status(400).json({ error: "businessId obrigatório" });
         return;
     }
-    const { date, startTime, endTime } = req.body;
     if (date && startTime && endTime) {
         try {
-            const validation = await (0, schedulingService_1.validateAppointmentSlot)(businessId, date, startTime, endTime, id);
+            const validation = await (0, schedulingService_1.validateAppointmentSlot)(businessId, date, startTime, endTime, id, Boolean(forceScheduleOverride));
             if (!validation.valid) {
                 res.status(409).json({ error: validation.reason });
                 return;

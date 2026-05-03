@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import dotenv from "dotenv";
 dotenv.config();
+import { todayBRT } from "../utils/date";
 
 const supabase = createClient(
   process.env.SUPABASE_URL!,
@@ -80,6 +81,7 @@ export async function createAppointment(payload: {
   chargedAmount: number;
   status: string;
   notes?: string | null;
+  forceScheduleOverride?: boolean;
 }) {
   const primaryServiceId = payload.serviceIds?.length ? payload.serviceIds[0] : payload.serviceId;
   const idsToLink = payload.serviceIds?.length ? payload.serviceIds : [payload.serviceId];
@@ -131,6 +133,7 @@ export async function updateAppointment(
     chargedAmount?: number;
     paymentStatus?: string;
     notes?: string;
+    forceScheduleOverride?: boolean;
   }
 ) {
   const primaryServiceId = payload.serviceIds?.length ? payload.serviceIds[0] : payload.serviceId;
@@ -235,6 +238,38 @@ export async function getAppointmentsByMonth(businessId: string, year: number, m
     ...a,
     clients: Array.isArray(a.clients) ? (a.clients[0] ?? null) : a.clients,
   }));
+}
+
+export async function autoConfirmPassedAppointments(businessId: string): Promise<void> {
+  const nowUTC = Date.now();
+  const todayStr = todayBRT();
+
+  const { data: candidates } = await supabase
+    .from("appointments")
+    .select("id, appointment_date, end_time")
+    .eq("business_id", businessId)
+    .eq("payment_status", "pending")
+    .lte("appointment_date", todayStr);
+
+  if (!candidates?.length) return;
+
+  const idsToConfirm = candidates
+    .filter((a) => {
+      const [year, month, day] = (a.appointment_date as string).split("-").map(Number);
+      const [h, m] = a.end_time
+        ? (a.end_time as string).slice(0, 5).split(":").map(Number)
+        : [23, 59];
+      // BRT h:m = UTC (h+3):m — Date.UTC handles hour overflow
+      return Date.UTC(year, month - 1, day, h + 3, m, 0) <= nowUTC;
+    })
+    .map((a) => a.id);
+
+  if (!idsToConfirm.length) return;
+
+  await supabase
+    .from("appointments")
+    .update({ payment_status: "confirmed" })
+    .in("id", idsToConfirm);
 }
 
 export async function getAppointmentsByDate(businessId: string, date: string) {

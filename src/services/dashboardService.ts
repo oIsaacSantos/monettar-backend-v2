@@ -5,6 +5,7 @@ import { createClient } from "@supabase/supabase-js";
 import { currentMonthBRT, todayBRT } from "../utils/date";
 import { calculateServiceSupplyCost } from "./suppliesService";
 import { calculateOperationalCostPerMinute } from "./financeService";
+import { autoConfirmPassedAppointments } from "./appointmentsService";
 
 const supabase = createClient(
   process.env.SUPABASE_URL!,
@@ -49,7 +50,26 @@ function calculateMonthlyGoal(
   return baseGoal / denominator;
 }
 
+function isConfirmedStatus(status: string | null | undefined) {
+  return status === "confirmed" || status === "paid";
+}
+
+// Interprets appointment_date (YYYY-MM-DD) + end_time (HH:MM) as BRT (UTC-3)
+// and returns true if that moment is in the past.
+// Uses Date.UTC so the result is server-timezone-independent.
+function hasPassedBRT(date: string, endTime: string | null | undefined): boolean {
+  const nowUTC = Date.now();
+  const [year, month, day] = (date as string).split("-").map(Number);
+  const [h, m] = endTime
+    ? (endTime as string).slice(0, 5).split(":").map(Number)
+    : [23, 59]; // no end_time: treat as end of day
+  // BRT h:m = UTC (h+3):m — Date.UTC handles hour overflow correctly
+  return Date.UTC(year, month - 1, day, h + 3, m, 0) <= nowUTC;
+}
+
 export async function getDashboardSummary(businessId: string) {
+  await autoConfirmPassedAppointments(businessId);
+
   const { data: business } = await supabase
     .from("businesses")
     .select("desired_pro_labore, reserve_percent, working_capital_percent")
@@ -58,7 +78,7 @@ export async function getDashboardSummary(businessId: string) {
 
   const { data: appointments } = await supabase
     .from("appointments")
-    .select("charged_amount, discount, appointment_date, service_id, payment_status, services(id, name, material_cost_estimate), appointment_services(service_id, services(id, name, material_cost_estimate))")
+    .select("charged_amount, discount, appointment_date, end_time, service_id, payment_status, services(id, name, material_cost_estimate), appointment_services(service_id, services(id, name, material_cost_estimate))")
     .eq("business_id", businessId)
     .not("payment_status", "in", '("cancelled","no_show")');
 
@@ -71,8 +91,10 @@ export async function getDashboardSummary(businessId: string) {
   let totalMaterial = 0;
   let todayRevenue = 0;
   let todayAppointments = 0;
-  let monthRevenue = 0;
-  let monthAppointments = 0;
+  let monthRevenue = 0;              // realized: confirmed/paid AND already happened
+  let monthAppointments = 0;         // realized this month count
+  let futureConfirmedRevenue = 0;    // confirmed/paid but hasn't happened yet, this month
+  let futurePendingRevenue = 0;      // pending and hasn't happened yet, this month
   const serviceCostCache = new Map<string, number>();
 
   const serviceMap = new Map<string, {
@@ -85,6 +107,12 @@ export async function getDashboardSummary(businessId: string) {
 
   for (const a of appointments ?? []) {
     const revenue = Number(a.charged_amount ?? 0) - Number(a.discount ?? 0);
+    const passed = hasPassedBRT(a.appointment_date, a.end_time);
+    const realized = isConfirmedStatus(a.payment_status) && passed;
+    const futureConfirmed = isConfirmedStatus(a.payment_status) && !passed;
+    const futurePending = a.payment_status === "pending" && !passed;
+    const inMonth = (a.appointment_date as string)?.startsWith(month);
+
     const svc = Array.isArray(a.services) ? a.services[0] : (a.services as any);
     const linkedServices = getAppointmentServices(a);
     let material = Number(svc?.material_cost_estimate ?? 0);
@@ -126,31 +154,39 @@ export async function getDashboardSummary(businessId: string) {
       material = serviceCostCache.get(svcId) ?? material;
     }
 
-    totalRevenue += revenue;
-    totalMaterial += material;
+    if (realized) {
+      totalRevenue += revenue;
+      totalMaterial += material;
 
-    if (a.appointment_date === today) {
-      todayRevenue += revenue;
-      todayAppointments += 1;
-    }
-    if (a.appointment_date?.startsWith(month)) {
-      monthRevenue += revenue;
-      monthAppointments += 1;
+      if (a.appointment_date === today) {
+        todayRevenue += revenue;
+        todayAppointments += 1;
+      }
+      if (inMonth) {
+        monthRevenue += revenue;
+        monthAppointments += 1;
+      }
+
+      const key = serviceIds.length > 0 ? serviceIds.join("+") : "__none__";
+      if (!serviceMap.has(key)) {
+        serviceMap.set(key, { serviceId: svcId, name: svcName, appointments: 0, revenue: 0, profit: 0 });
+      }
+      const entry = serviceMap.get(key)!;
+      entry.appointments += 1;
+      entry.revenue += revenue;
+      entry.profit += revenue - material;
     }
 
-    const key = serviceIds.length > 0 ? serviceIds.join("+") : "__none__";
-    if (!serviceMap.has(key)) {
-      serviceMap.set(key, { serviceId: svcId, name: svcName, appointments: 0, revenue: 0, profit: 0 });
+    if (inMonth) {
+      if (futureConfirmed) futureConfirmedRevenue += revenue;
+      if (futurePending) futurePendingRevenue += revenue;
     }
-    const entry = serviceMap.get(key)!;
-    entry.appointments += 1;
-    entry.revenue += revenue;
-    entry.profit += revenue - material;
   }
 
+  const forecastRevenue = futureConfirmedRevenue + futurePendingRevenue;
   const totalFixed = operationalCosts.monthlyOperationalCost;
   const totalProfit = totalRevenue - totalMaterial - totalFixed;
-  const totalAppointments = appointments?.length ?? 0;
+  const totalAppointments = (appointments ?? []).filter((a) => isConfirmedStatus(a.payment_status) && hasPassedBRT(a.appointment_date, a.end_time)).length;
   const averageTicket = totalAppointments > 0 ? totalRevenue / totalAppointments : 0;
 
   const proLabore = toSafeNumber(business?.desired_pro_labore);
@@ -163,7 +199,10 @@ export async function getDashboardSummary(businessId: string) {
     reservePercent,
     workingCapitalPercent
   );
+  const projectedMonthRevenue = monthRevenue + forecastRevenue;
   const goalProgress = monthlyGoal > 0 ? monthRevenue / monthlyGoal : null;
+  const forecastProgress = monthlyGoal > 0 ? projectedMonthRevenue / monthlyGoal : null;
+  const remainingGoal = Math.max((monthlyGoal || 0) - monthRevenue, 0);
   const reserve = monthRevenue * reservePercent / 100;
   const workingCapital = monthRevenue * workingCapitalPercent / 100;
 
@@ -172,12 +211,24 @@ export async function getDashboardSummary(businessId: string) {
 
   return {
     businessId,
+    // Explicit realized fields — use these in the UI, not monthSummary
+    realizedRevenue: monthRevenue,
+    realizedAppointmentsCount: monthAppointments,
+    // Forecast / projection
+    forecastRevenue,
+    futureConfirmedRevenue,
+    futurePendingRevenue,
+    projectedMonthRevenue,
+    // Goal
+    monthlyGoal: monthlyGoal || null,
+    goalProgress,
+    forecastProgress,
+    remainingGoal,
+    // All-time totals (realized only)
     totalRevenue,
     totalProfit,
     totalAppointments,
     averageTicket,
-    monthlyGoal: monthlyGoal || null,
-    goalProgress,
     totalFixedCosts: totalFixed,
     monthlyOperationalCost: operationalCosts.monthlyOperationalCost,
     monthlyWorkMinutes: operationalCosts.monthlyWorkMinutes,
@@ -193,6 +244,7 @@ export async function getDashboardSummary(businessId: string) {
       totalAppointments: todayAppointments,
       totalProfit: todayRevenue,
     },
+    // monthSummary kept for backward compat — mirrors realizedRevenue
     monthSummary: {
       totalRevenue: monthRevenue,
       totalAppointments: monthAppointments,
