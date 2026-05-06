@@ -13,6 +13,21 @@ type WorkHoursByDay = Record<string, { start: string; end: string }>;
 type OccupiedSlot = { start: number; end: number };
 type LunchBreak = { start: number; end: number };
 type AvailabilityBlock = { start: number; end: number };
+export type SchedulingValidationCode =
+  | "DAY_NOT_WORKING"
+  | "OUTSIDE_WORKING_HOURS"
+  | "LUNCH_BREAK"
+  | "BLOCKED_TIME"
+  | "APPOINTMENT_CONFLICT"
+  | "BUFFER_CONFLICT"
+  | "INVALID_TIME"
+  | "INVALID_PAYLOAD";
+export type SchedulingValidationResult = {
+  valid: boolean;
+  reason?: string;
+  code?: SchedulingValidationCode;
+  overrideable?: boolean;
+};
 type ScheduleOverrideType =
   | "block_full_day"
   | "block_time_range"
@@ -36,6 +51,31 @@ const SLOT_INTERVAL_MINUTES = 30;
 const AFTERNOON_START_TIME = "12:00";
 const EVENING_START_TIME = "18:00";
 const BRT_TIME_ZONE = "America/Sao_Paulo";
+const OVERRIDEABLE_VALIDATION_CODES = new Set<SchedulingValidationCode>([
+  "DAY_NOT_WORKING",
+  "OUTSIDE_WORKING_HOURS",
+  "APPOINTMENT_CONFLICT",
+  "BUFFER_CONFLICT",
+]);
+
+function schedulingFailure(
+  code: SchedulingValidationCode,
+  reason: string,
+  allowOverride: boolean
+): SchedulingValidationResult {
+  const overrideable = OVERRIDEABLE_VALIDATION_CODES.has(code);
+  console.info("[manual-override-debug][backend][scheduling:block]", {
+    code,
+    reason,
+    allowOverride,
+    overrideable,
+    allowedByOverride: allowOverride && overrideable,
+  });
+  if (allowOverride && overrideable) {
+    return { valid: true };
+  }
+  return { valid: false, code, reason, overrideable };
+}
 
 function timeToMinutes(time: string): number {
   const [h, m] = time.split(":").map(Number);
@@ -244,6 +284,14 @@ function hasOccupiedConflict(
   return occupied.some((slot) => start < slot.end + buffer && end > slot.start - buffer);
 }
 
+function hasDirectOccupiedOverlap(
+  start: number,
+  end: number,
+  occupied: OccupiedSlot[]
+) {
+  return occupied.some((slot) => start < slot.end && end > slot.start);
+}
+
 function buildRealAvailabilitySlots(params: {
   workStart: number;
   workEnd: number;
@@ -380,17 +428,30 @@ export async function validateAppointmentSlot(
   startTime: string,
   endTime: string,
   excludeAppointmentId?: string,
-  forceOverride: boolean = false
-): Promise<{ valid: boolean; reason?: string }> {
+  allowOverride: boolean = false
+): Promise<SchedulingValidationResult> {
+  console.info("[manual-override-debug][backend][scheduling:validate]", {
+    businessId,
+    date,
+    startTime,
+    endTime,
+    excludeAppointmentId,
+    allowOverride,
+  });
+
   if (!isValidTime(startTime) || !isValidTime(endTime)) {
-    return { valid: false, reason: "Horário inválido." };
+    return schedulingFailure("INVALID_TIME", "Horário inválido.", allowOverride);
   }
 
   const startMins = timeToMinutes(startTime);
   const endMins = timeToMinutes(endTime);
 
   if (endMins <= startMins) {
-    return { valid: false, reason: "Horário de término deve ser após o horário de início." };
+    return schedulingFailure(
+      "INVALID_TIME",
+      "Horário de término deve ser após o horário de início.",
+      allowOverride
+    );
   }
 
   const { data: business } = await supabase
@@ -400,11 +461,7 @@ export async function validateAppointmentSlot(
     .single();
 
   if (!business) {
-    return { valid: false, reason: "Negócio não encontrado." };
-  }
-
-  if (forceOverride) {
-    return { valid: true };
+    return schedulingFailure("INVALID_PAYLOAD", "Negócio não encontrado.", allowOverride);
   }
 
   const workDays: number[] = (business?.work_days_of_week as number[] | null) ?? [1, 2, 3, 4, 5, 6];
@@ -412,6 +469,14 @@ export async function validateAppointmentSlot(
   const { workStart, workEnd } = getWorkRange(business, targetDayOfWeek);
   const lunchBreak = getLunchBreak(business);
   const buffer = getAppointmentBufferMinutes(business);
+
+  if (lunchBreak && startMins < lunchBreak.end && endMins > lunchBreak.start) {
+    return schedulingFailure(
+      "LUNCH_BREAK",
+      "Horário conflita com o intervalo de almoço.",
+      allowOverride
+    );
+  }
 
   const { data: overrides } = await supabase
     .from("schedule_overrides")
@@ -422,7 +487,7 @@ export async function validateAppointmentSlot(
   const overridesList = (overrides ?? []) as ScheduleOverride[];
 
   if (hasFullDayBlock(overridesList)) {
-    return { valid: false, reason: "Este dia está bloqueado na agenda." };
+    return schedulingFailure("BLOCKED_TIME", "Este dia está bloqueado na agenda.", allowOverride);
   }
 
   const isWorkDay = workDays.includes(targetDayOfWeek);
@@ -431,7 +496,11 @@ export async function validateAppointmentSlot(
   );
 
   if (!isWorkDay && !hasOpenOverride) {
-    return { valid: false, reason: "Este dia não é um dia de trabalho." };
+    return schedulingFailure(
+      "DAY_NOT_WORKING",
+      "Você normalmente não atende nesse dia.",
+      allowOverride
+    );
   }
 
   const workRange = { start: workStart, end: workEnd };
@@ -441,15 +510,16 @@ export async function validateAppointmentSlot(
 
   const fitsInBlock = mergedBlocks.some((b) => startMins >= b.start && endMins <= b.end);
   if (!fitsInBlock) {
-    if (lunchBreak && startMins < lunchBreak.end && endMins > lunchBreak.start) {
-      return { valid: false, reason: "Horário conflita com o intervalo de almoço." };
-    }
-    return { valid: false, reason: "Horário fora do expediente de trabalho." };
+    return schedulingFailure(
+      "OUTSIDE_WORKING_HOURS",
+      "Esse horário está fora do expediente configurado.",
+      allowOverride
+    );
   }
 
   const blockRanges = getBlockRanges(overridesList);
   if (hasBlockConflict(startMins, endMins, blockRanges)) {
-    return { valid: false, reason: "Horário está em um período bloqueado." };
+    return schedulingFailure("BLOCKED_TIME", "Horário está em um período bloqueado.", allowOverride);
   }
 
   let query = supabase
@@ -470,8 +540,20 @@ export async function validateAppointmentSlot(
     end: timeToMinutes(a.end_time),
   }));
 
+  if (hasDirectOccupiedOverlap(startMins, endMins, occupied)) {
+    return schedulingFailure(
+      "APPOINTMENT_CONFLICT",
+      "Existe conflito com outro atendimento.",
+      allowOverride
+    );
+  }
+
   if (hasOccupiedConflict(startMins, endMins, occupied, buffer)) {
-    return { valid: false, reason: "Horário conflita com outro atendimento agendado." };
+    return schedulingFailure(
+      "BUFFER_CONFLICT",
+      "Esse horário não respeita o buffer configurado.",
+      allowOverride
+    );
   }
 
   return { valid: true };
