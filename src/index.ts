@@ -20,6 +20,7 @@ import { scheduleOverridesRouter } from "./routes/scheduleOverrides";
 import { suppliesRouter } from "./routes/supplies";
 import { serviceSuppliesRouter } from "./routes/serviceSupplies";
 import { financialRouter } from "./routes/financial";
+import { productsRouter } from "./routes/products";
 import { requireBusinessAccess } from "./middleware/auth";
 
 dotenv.config({ path: path.resolve(__dirname, "../.env") });
@@ -50,6 +51,7 @@ app.use("/api/fixed-costs", requireBusinessAccess, fixedCostsRouter);
 app.use("/api/supplies", requireBusinessAccess, suppliesRouter);
 app.use("/api/service-supplies", requireBusinessAccess, serviceSuppliesRouter);
 app.use("/api/financial", requireBusinessAccess, financialRouter);
+app.use("/api/products", requireBusinessAccess, productsRouter);
 app.use("/api/business", requireBusinessAccess, businessRouter);
 app.use("/api/schedule-overrides", requireBusinessAccess, scheduleOverridesRouter);
 app.use("/api/booking", publicBookingRateLimit, bookingRouter);
