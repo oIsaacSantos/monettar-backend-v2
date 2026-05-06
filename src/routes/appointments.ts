@@ -5,10 +5,27 @@ import { getAvailableSlots, validateAppointmentSlot } from "../services/scheduli
 export const appointmentsRouter = Router();
 
 appointmentsRouter.post("/", async (req: Request, res: Response) => {
-  const { businessId, serviceId, serviceIds, clientId, appointmentDate, startTime, endTime, chargedAmount, status, notes, forceScheduleOverride } = req.body;
+  const { businessId, serviceId, serviceIds, clientId, appointmentDate, startTime, endTime, chargedAmount, status, notes, appointmentType, appointment_type, allowOverride, forceScheduleOverride } = req.body;
   const primaryServiceId = (Array.isArray(serviceIds) && serviceIds.length > 0) ? serviceIds[0] : serviceId;
+  const resolvedAllowOverride = Boolean(allowOverride ?? forceScheduleOverride);
+  console.info("[manual-override-debug][backend][appointments:POST][received]", {
+    allowOverride,
+    forceScheduleOverride,
+    resolvedAllowOverride,
+    businessId,
+    clientId,
+    appointmentDate,
+    startTime,
+    endTime,
+    serviceId: primaryServiceId,
+    serviceIds: Array.isArray(serviceIds) ? serviceIds : undefined,
+  });
   if (!businessId || !primaryServiceId || !clientId || !appointmentDate || !startTime || !endTime) {
-    res.status(400).json({ error: "businessId, serviceId, clientId, appointmentDate, startTime e endTime são obrigatórios" });
+    res.status(400).json({
+      error: "businessId, serviceId, clientId, appointmentDate, startTime e endTime são obrigatórios",
+      code: "INVALID_PAYLOAD",
+      overrideable: false,
+    });
     return;
   }
   try {
@@ -18,10 +35,21 @@ appointmentsRouter.post("/", async (req: Request, res: Response) => {
       startTime,
       endTime,
       undefined,
-      Boolean(forceScheduleOverride)
+      resolvedAllowOverride
     );
+    console.info("[manual-override-debug][backend][appointments:POST][validation]", {
+      allowOverride: resolvedAllowOverride,
+      valid: validation.valid,
+      code: validation.code,
+      reason: validation.reason,
+      overrideable: validation.overrideable,
+    });
     if (!validation.valid) {
-      res.status(409).json({ error: validation.reason });
+      res.status(409).json({
+        error: validation.reason,
+        code: validation.code,
+        overrideable: Boolean(validation.overrideable),
+      });
       return;
     }
     const data = await createAppointment({
@@ -35,9 +63,14 @@ appointmentsRouter.post("/", async (req: Request, res: Response) => {
       chargedAmount: Number(chargedAmount) || 0,
       status: status ?? "pending",
       notes,
+      appointmentType: appointmentType ?? appointment_type,
     });
     res.status(201).json(data);
   } catch (err: any) {
+    if (err?.code === "INVALID_PAYLOAD") {
+      res.status(400).json({ error: err.message, code: err.code, overrideable: false });
+      return;
+    }
     res.status(500).json({ error: err.message });
   }
 });
@@ -45,20 +78,48 @@ appointmentsRouter.post("/", async (req: Request, res: Response) => {
 appointmentsRouter.put("/:id", async (req: Request, res: Response) => {
   const { businessId } = req.query;
   const { id } = req.params;
-  const { date, startTime, endTime, forceScheduleOverride } = req.body;
-  if (!businessId) { res.status(400).json({ error: "businessId obrigatório" }); return; }
-  if (date && startTime && endTime) {
+  const { appointmentDate, appointment_date, date, startTime, endTime, paymentStatus, allowOverride, forceScheduleOverride } = req.body;
+  const resolvedDate = appointmentDate ?? appointment_date ?? date;
+  const resolvedAllowOverride = Boolean(allowOverride ?? forceScheduleOverride);
+  console.info("[manual-override-debug][backend][appointments:PUT][received]", {
+    appointmentId: id,
+    allowOverride,
+    forceScheduleOverride,
+    resolvedAllowOverride,
+    businessId,
+    appointmentDate: resolvedDate,
+    startTime,
+    endTime,
+    paymentStatus,
+  });
+  if (!businessId) {
+    res.status(400).json({ error: "businessId obrigatório", code: "INVALID_PAYLOAD", overrideable: false });
+    return;
+  }
+  if (paymentStatus !== "cancelled" && resolvedDate && startTime && endTime) {
     try {
       const validation = await validateAppointmentSlot(
         businessId as string,
-        date,
+        resolvedDate,
         startTime,
         endTime,
         id,
-        Boolean(forceScheduleOverride)
+        resolvedAllowOverride
       );
+      console.info("[manual-override-debug][backend][appointments:PUT][validation]", {
+        appointmentId: id,
+        allowOverride: resolvedAllowOverride,
+        valid: validation.valid,
+        code: validation.code,
+        reason: validation.reason,
+        overrideable: validation.overrideable,
+      });
       if (!validation.valid) {
-        res.status(409).json({ error: validation.reason });
+        res.status(409).json({
+          error: validation.reason,
+          code: validation.code,
+          overrideable: Boolean(validation.overrideable),
+        });
         return;
       }
     } catch (err: any) {
@@ -69,6 +130,10 @@ appointmentsRouter.put("/:id", async (req: Request, res: Response) => {
   try {
     res.json(await updateAppointment(id, businessId as string, req.body));
   } catch (err: any) {
+    if (err?.code === "INVALID_PAYLOAD") {
+      res.status(400).json({ error: err.message, code: err.code, overrideable: false });
+      return;
+    }
     res.status(500).json({ error: err.message });
   }
 });
