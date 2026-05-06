@@ -15,14 +15,48 @@ type ClientPayload = {
   birthDate?: string | null;
   birth_date?: string | null;
   birthdate?: string | null;
+  first_appointment_override?: string | null;
+  firstAppointmentOverride?: string | null;
   notes?: string | null;
 };
+
+const ALLOWED_GENDERS = new Set(["female", "male", "other", "not_informed"]);
 
 function normalizePhone(phone: string) {
   return String(phone).replace(/\D/g, "");
 }
 
-async function findActiveClientByPhone(businessId: string, phone: string) {
+function normalizeGender(gender: string | null | undefined) {
+  if (gender === undefined) return undefined;
+  if (gender === null || gender.trim() === "") return null;
+  if (!ALLOWED_GENDERS.has(gender)) {
+    throw new Error("Gênero inválido.");
+  }
+  return gender;
+}
+
+function normalizeOptionalDate(value: string | null | undefined, fieldLabel: string) {
+  if (value === undefined) return undefined;
+  if (value === null || value === "") return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    throw new Error(`${fieldLabel} deve estar no formato YYYY-MM-DD.`);
+  }
+
+  const date = new Date(`${value}T00:00:00.000Z`);
+  if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== value) {
+    throw new Error(`${fieldLabel} inválida.`);
+  }
+
+  return value;
+}
+
+function resolveFirstAppointmentOverride(payload: ClientPayload) {
+  return payload.first_appointment_override !== undefined
+    ? payload.first_appointment_override
+    : payload.firstAppointmentOverride;
+}
+
+export async function findActiveClientByPhone(businessId: string, phone: string) {
   const normalized = normalizePhone(phone);
   if (!normalized) return null;
   const last8 = normalized.slice(-8);
@@ -32,10 +66,10 @@ async function findActiveClientByPhone(businessId: string, phone: string) {
     .eq("business_id", businessId)
     .ilike("phone", `%${last8}%`)
     .is("deleted_at", null)
-    .maybeSingle();
+    .limit(1);
 
   if (error) throw new Error(error.message);
-  return data;
+  return data?.[0] ?? null;
 }
 
 export async function getClientsWithStats(businessId: string) {
@@ -47,6 +81,7 @@ export async function getClientsWithStats(businessId: string) {
       phone,
       gender,
       birth_date,
+      first_appointment_override,
       notes,
       appointments(id, appointment_date, charged_amount, discount, payment_status, services(name), appointment_services(service_id, services(name)))
     `)
@@ -67,6 +102,8 @@ export async function getClientsWithStats(businessId: string) {
     const sortedAll = [...appts].sort((a: any, b: any) =>
       a.appointment_date.localeCompare(b.appointment_date)
     );
+    const firstAppointmentCalculated = sortedActive[0]?.appointment_date ?? null;
+    const firstAppointmentOverride = c.first_appointment_override ?? null;
 
     return {
       id: c.id,
@@ -76,7 +113,9 @@ export async function getClientsWithStats(businessId: string) {
       birthDate: c.birth_date ?? null,
       notes: c.notes ?? null,
       totalAppointments: activeAppointments.length,
-      firstAppointment: sortedActive[0]?.appointment_date ?? null,
+      firstAppointment: firstAppointmentOverride ?? firstAppointmentCalculated,
+      firstAppointmentCalculated,
+      firstAppointmentOverride,
       lastAppointment: sortedActive[sortedActive.length - 1]?.appointment_date ?? null,
       appointments: sortedAll.map((a: any) => ({
         id: a.id,
@@ -100,12 +139,24 @@ export async function getClientsWithStats(businessId: string) {
 
 export async function createClient(
   businessId: string,
-  payload: { name: string; phone: string; gender?: string | null; birthDate?: string | null }
+  payload: {
+    name: string;
+    phone: string;
+    gender?: string | null;
+    birthDate?: string | null;
+    first_appointment_override?: string | null;
+    firstAppointmentOverride?: string | null;
+  }
 ) {
   const normalizedPhone = normalizePhone(payload.phone);
   if (!normalizedPhone) {
     throw new Error("Telefone inválido");
   }
+  const normalizedGender = normalizeGender(payload.gender);
+  const firstAppointmentOverride = normalizeOptionalDate(
+    resolveFirstAppointmentOverride(payload),
+    "Primeiro atendimento"
+  );
 
   const existingClient = await findActiveClientByPhone(businessId, normalizedPhone);
   if (existingClient) {
@@ -121,8 +172,9 @@ export async function createClient(
   const insertAttempts = [
     {
       ...basePayload,
-      gender: payload.gender ?? null,
+      gender: normalizedGender ?? null,
       birth_date: payload.birthDate ?? null,
+      first_appointment_override: firstAppointmentOverride ?? null,
     },
     basePayload,
   ];
@@ -172,10 +224,18 @@ export async function updateClient(
   const updatePayload: any = {};
   if (payload.name !== undefined) updatePayload.name = payload.name;
   if (normalizedPhone !== undefined) updatePayload.phone = normalizedPhone;
-  if (payload.gender !== undefined) updatePayload.gender = payload.gender;
+  const gender = normalizeGender(payload.gender);
+  if (gender !== undefined) updatePayload.gender = gender;
   const birthDateValue = payload.birthDate ?? payload.birth_date ?? payload.birthdate;
   if (birthDateValue !== undefined) {
     updatePayload.birth_date = birthDateValue;
+  }
+  const firstAppointmentOverride = normalizeOptionalDate(
+    resolveFirstAppointmentOverride(payload),
+    "Primeiro atendimento"
+  );
+  if (firstAppointmentOverride !== undefined) {
+    updatePayload.first_appointment_override = firstAppointmentOverride;
   }
   if (payload.notes !== undefined) updatePayload.notes = payload.notes;
 

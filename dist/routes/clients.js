@@ -56,7 +56,7 @@ exports.clientsRouter.post("/", async (req, res) => {
         res.status(400).json({ error: "businessId obrigatório" });
         return;
     }
-    const { name, phone, gender, birthDate, birth_date, birthdate } = req.body;
+    const { name, phone, gender, birthDate, birth_date, birthdate, first_appointment_override, firstAppointmentOverride, } = req.body;
     if (!name || !phone) {
         res.status(400).json({ error: "name e phone obrigatórios" });
         return;
@@ -70,6 +70,9 @@ exports.clientsRouter.post("/", async (req, res) => {
             phone,
             gender,
             birthDate: birthDate ?? birth_date ?? birthdate,
+            first_appointment_override: first_appointment_override !== undefined
+                ? first_appointment_override
+                : firstAppointmentOverride,
         }));
     }
     catch (err) {
@@ -79,12 +82,26 @@ exports.clientsRouter.post("/", async (req, res) => {
 exports.clientsRouter.put("/:id", async (req, res) => {
     const { businessId } = req.query;
     const { id } = req.params;
+    console.log("[clients PUT] method=PUT", {
+        id,
+        businessId,
+        body: req.body,
+        query: req.query,
+    });
     if (!businessId) {
         res.status(400).json({ error: "businessId obrigatório" });
         return;
     }
-    const { name, phone, gender, birthDate, birth_date, birthdate, notes } = req.body;
-    if (!name && !phone && gender === undefined && birthDate === undefined && birth_date === undefined && birthdate === undefined && notes === undefined) {
+    const { name, phone, gender, birthDate, birth_date, birthdate, first_appointment_override, firstAppointmentOverride, notes, } = req.body;
+    if (!name &&
+        !phone &&
+        gender === undefined &&
+        birthDate === undefined &&
+        birth_date === undefined &&
+        birthdate === undefined &&
+        first_appointment_override === undefined &&
+        firstAppointmentOverride === undefined &&
+        notes === undefined) {
         res.status(400).json({ error: "Pelo menos um campo deve ser fornecido para atualização." });
         return;
     }
@@ -95,10 +112,20 @@ exports.clientsRouter.put("/:id", async (req, res) => {
             phone,
             gender,
             birthDate: birthDate ?? birth_date ?? birthdate,
+            first_appointment_override: first_appointment_override !== undefined
+                ? first_appointment_override
+                : firstAppointmentOverride,
             notes,
         }));
     }
     catch (err) {
+        console.error("[clients PUT] error", {
+            id,
+            businessId,
+            body: req.body,
+            error: err?.message ?? err,
+            stack: err?.stack,
+        });
         if (err.message?.includes("Telefone já está em uso")) {
             res.status(409).json({ error: err.message });
             return;
@@ -109,6 +136,11 @@ exports.clientsRouter.put("/:id", async (req, res) => {
 exports.clientsRouter.delete("/:id", async (req, res) => {
     const { businessId } = req.query;
     const { id } = req.params;
+    console.log("[clients DELETE] method=DELETE", {
+        id,
+        businessId,
+        query: req.query,
+    });
     if (!businessId) {
         res.status(400).json({ error: "businessId obrigatório" });
         return;
@@ -118,6 +150,12 @@ exports.clientsRouter.delete("/:id", async (req, res) => {
         res.json(await softDeleteClient(businessId, id));
     }
     catch (err) {
+        console.error("[clients DELETE] error", {
+            id,
+            businessId,
+            error: err?.message ?? err,
+            stack: err?.stack,
+        });
         res.status(500).json({ error: err.message });
     }
 });
