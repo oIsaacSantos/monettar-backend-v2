@@ -2,6 +2,7 @@ import { Router, Request, Response } from "express";
 import { createClient } from "@supabase/supabase-js";
 import webpush from "web-push";
 import { sendDayStartNotification } from "../services/notificationService";
+import { expirePendingAppointments, reconcileMercadoPagoPayments } from "../services/appointmentsService";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -14,6 +15,30 @@ const supabase = createClient(
 export const cronRouter = Router();
 
 let vapidConfigured = false;
+
+cronRouter.post("/expire-payments", async (req: Request, res: Response) => {
+  if (!isCronAuthorized(req)) { res.status(401).json({ error: "Não autorizado" }); return; }
+  try {
+    const result = await expirePendingAppointments();
+    console.log("[cron/expire-payments]", result);
+    res.json({ ok: true, ...result });
+  } catch (err: any) {
+    console.error("[cron/expire-payments] error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+cronRouter.post("/reconcile-payments", async (req: Request, res: Response) => {
+  if (!isCronAuthorized(req)) { res.status(401).json({ error: "Não autorizado" }); return; }
+  try {
+    const result = await reconcileMercadoPagoPayments();
+    console.log("[cron/reconcile-payments]", result);
+    res.json({ ok: true, ...result });
+  } catch (err: any) {
+    console.error("[cron/reconcile-payments] error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 function configureWebPush() {
   if (vapidConfigured) return;

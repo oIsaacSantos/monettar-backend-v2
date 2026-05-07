@@ -214,14 +214,20 @@ exports.paymentsRouter.post("/webhook", async (req, res) => {
         return;
     }
     const { type, data } = req.body;
+    console.log("[webhook] received type:", type, "data.id:", data?.id);
     if (type === "payment" && data?.id) {
         try {
             const paymentId = String(data.id);
-            const { data: appt } = await supabase
+            console.log("[webhook] processing payment id:", paymentId);
+            const { data: appt, error: apptLookupError } = await supabase
                 .from("appointments")
                 .select("id, business_id, payment_status")
                 .eq("mp_payment_id", paymentId)
-                .single();
+                .maybeSingle();
+            if (apptLookupError) {
+                console.error("[webhook] error looking up appointment by mp_payment_id:", apptLookupError.message);
+            }
+            console.log("[webhook] appointment by mp_payment_id:", appt?.id ?? "NOT FOUND", "current status:", appt?.payment_status ?? "N/A");
             let accessToken = process.env.MP_ACCESS_TOKEN;
             if (appt?.business_id) {
                 const { data: business } = await supabase
@@ -236,22 +242,34 @@ exports.paymentsRouter.post("/webhook", async (req, res) => {
             const externalReference = paymentDetails.external_reference
                 ? String(paymentDetails.external_reference)
                 : null;
+            console.log("[webhook] MP status:", status, "external_reference:", externalReference);
             if (status === "approved" && appt && appt.payment_status !== "confirmed") {
-                console.log("[push-confirmed] approved payment detected");
-                await supabase
+                console.log("[webhook] confirming appointment by mp_payment_id:", appt.id);
+                const { error: updateError } = await supabase
                     .from("appointments")
                     .update({ payment_status: "confirmed", paid_date: (0, date_1.todayBRT)() })
                     .eq("mp_payment_id", paymentId);
-                await notifyConfirmedAppointment(appt.id);
+                if (updateError) {
+                    console.error("[webhook] update error (primary):", updateError.message);
+                }
+                else {
+                    console.log("[webhook] appointment confirmed:", appt.id);
+                    await notifyConfirmedAppointment(appt.id);
+                }
             }
             else if (status === "approved" && !appt && externalReference) {
-                const { data: fallbackAppt } = await supabase
+                console.log("[webhook] appointment not found by mp_payment_id, trying external_reference:", externalReference);
+                const { data: fallbackAppt, error: fallbackError } = await supabase
                     .from("appointments")
                     .select("id, payment_status")
                     .eq("id", externalReference)
-                    .single();
+                    .maybeSingle();
+                if (fallbackError) {
+                    console.error("[webhook] error looking up appointment by external_reference:", fallbackError.message);
+                }
+                console.log("[webhook] appointment by external_reference:", fallbackAppt?.id ?? "NOT FOUND", "status:", fallbackAppt?.payment_status ?? "N/A");
                 if (fallbackAppt && fallbackAppt.payment_status !== "confirmed") {
-                    await supabase
+                    const { error: fallbackUpdateError } = await supabase
                         .from("appointments")
                         .update({
                         payment_status: "confirmed",
@@ -259,12 +277,30 @@ exports.paymentsRouter.post("/webhook", async (req, res) => {
                         mp_payment_id: paymentId,
                     })
                         .eq("id", fallbackAppt.id);
-                    await notifyConfirmedAppointment(fallbackAppt.id);
+                    if (fallbackUpdateError) {
+                        console.error("[webhook] update error (fallback):", fallbackUpdateError.message);
+                    }
+                    else {
+                        console.log("[webhook] appointment confirmed via fallback:", fallbackAppt.id);
+                        await notifyConfirmedAppointment(fallbackAppt.id);
+                    }
                 }
+                else if (fallbackAppt?.payment_status === "confirmed") {
+                    console.log("[webhook] appointment already confirmed, skipping:", fallbackAppt.id);
+                }
+                else {
+                    console.warn("[webhook] no appointment found for payment:", paymentId, "external_reference:", externalReference);
+                }
+            }
+            else if (status === "approved" && appt?.payment_status === "confirmed") {
+                console.log("[webhook] appointment already confirmed, skipping:", appt.id);
+            }
+            else {
+                console.log("[webhook] no action for status:", status, "appt found:", !!appt);
             }
         }
         catch (err) {
-            console.error("Webhook error:", err);
+            console.error("[webhook] unhandled error:", err);
         }
     }
     res.sendStatus(200);

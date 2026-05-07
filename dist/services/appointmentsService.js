@@ -1,4 +1,37 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
@@ -9,6 +42,10 @@ exports.deleteAppointment = deleteAppointment;
 exports.getAllAppointments = getAllAppointments;
 exports.getAppointmentsByMonth = getAppointmentsByMonth;
 exports.autoConfirmPassedAppointments = autoConfirmPassedAppointments;
+exports.expirePendingAppointments = expirePendingAppointments;
+exports.reconcileMercadoPagoPayments = reconcileMercadoPagoPayments;
+exports.getPendingPayments = getPendingPayments;
+exports.confirmAppointmentManually = confirmAppointmentManually;
 exports.getAppointmentsByDate = getAppointmentsByDate;
 const supabase_js_1 = require("@supabase/supabase-js");
 const dotenv_1 = __importDefault(require("dotenv"));
@@ -306,6 +343,7 @@ async function getAppointmentsByMonth(businessId, year, month) {
         .eq("business_id", businessId)
         .gte("appointment_date", start)
         .lte("appointment_date", end)
+        .in("payment_status", ACTIVE_APPOINTMENT_STATUSES)
         .order("appointment_date", { ascending: true })
         .order("start_time", { ascending: true });
     if (error)
@@ -343,6 +381,135 @@ async function autoConfirmPassedAppointments(businessId) {
         .update({ payment_status: "confirmed" })
         .in("id", idsToConfirm);
 }
+const ACTIVE_APPOINTMENT_STATUSES = ["confirmed", "paid"];
+async function expirePendingAppointments() {
+    const now = new Date().toISOString();
+    const { data, error } = await supabase
+        .from("appointments")
+        .update({ payment_status: "payment_expired" })
+        .eq("payment_status", "pending")
+        .is("paid_date", null)
+        .lt("payment_expires_at", now)
+        .select("id");
+    if (error) {
+        console.error("[expire] error:", error.message);
+        throw new Error(error.message);
+    }
+    const expired = data?.length ?? 0;
+    if (expired > 0)
+        console.log(`[expire] ${expired} appointments set to payment_expired`);
+    return { expired };
+}
+async function reconcileMercadoPagoPayments() {
+    const { data: candidates, error } = await supabase
+        .from("appointments")
+        .select("id, business_id, payment_status, mp_payment_id")
+        .in("payment_status", ["pending", "payment_expired"])
+        .not("mp_payment_id", "is", null);
+    if (error)
+        throw new Error(error.message);
+    if (!candidates?.length) {
+        console.log("[reconcile] no candidates found");
+        return { checked: 0, confirmed: 0, errors: 0 };
+    }
+    console.log(`[reconcile] checking ${candidates.length} appointments`);
+    const businessIds = [...new Set(candidates.map((a) => a.business_id))];
+    const { data: businesses } = await supabase
+        .from("businesses")
+        .select("id, mp_access_token")
+        .in("id", businessIds);
+    const tokenMap = new Map((businesses ?? []).map((b) => [b.id, b.mp_access_token?.trim() || process.env.MP_ACCESS_TOKEN]));
+    const { getPaymentDetails } = await Promise.resolve().then(() => __importStar(require("./paymentService")));
+    let checked = 0;
+    let confirmed = 0;
+    let errors = 0;
+    for (const appt of candidates) {
+        if (!appt.mp_payment_id)
+            continue;
+        checked++;
+        try {
+            const accessToken = tokenMap.get(appt.business_id) ?? process.env.MP_ACCESS_TOKEN;
+            const details = await getPaymentDetails(accessToken, appt.mp_payment_id);
+            console.log(`[reconcile] appt=${appt.id} was=${appt.payment_status} MP=${details.status}`);
+            if (details.status === "approved") {
+                const { error: updateError } = await supabase
+                    .from("appointments")
+                    .update({ payment_status: "confirmed", paid_date: (0, date_1.todayBRT)() })
+                    .eq("id", appt.id);
+                if (updateError) {
+                    console.error(`[reconcile] update error ${appt.id}:`, updateError.message);
+                    errors++;
+                }
+                else {
+                    console.log(`[reconcile] confirmed ${appt.id}`);
+                    confirmed++;
+                }
+            }
+        }
+        catch (err) {
+            console.error(`[reconcile] error for ${appt.id}:`, err.message);
+            errors++;
+        }
+    }
+    console.log(`[reconcile] done: checked=${checked} confirmed=${confirmed} errors=${errors}`);
+    return { checked, confirmed, errors };
+}
+async function getPendingPayments(businessId) {
+    const { data, error } = await supabase
+        .from("appointments")
+        .select(`
+      id,
+      appointment_date,
+      start_time,
+      end_time,
+      charged_amount,
+      discount,
+      payment_status,
+      payment_expires_at,
+      mp_payment_id,
+      clients(id, name, phone),
+      services(id, name, duration_minutes),
+      appointment_services(service_id, services(id, name, current_price, duration_minutes))
+    `)
+        .eq("business_id", businessId)
+        .in("payment_status", ["pending", "payment_expired"])
+        .order("appointment_date", { ascending: true })
+        .order("start_time", { ascending: true });
+    if (error) {
+        console.error("[pending-payments][backend][supabase-error]", {
+            message: error.message,
+            code: error.code,
+            details: error.details,
+            hint: error.hint,
+            full: error,
+        });
+        const wrapped = new Error(error.message);
+        wrapped.code = error.code;
+        wrapped.details = error.details;
+        wrapped.hint = error.hint;
+        throw wrapped;
+    }
+    return (data ?? []).map((a) => normalizeAppointmentServices({
+        ...a,
+        clients: Array.isArray(a.clients) ? (a.clients[0] ?? null) : a.clients,
+    }));
+}
+async function confirmAppointmentManually(id, businessId) {
+    const { data, error } = await supabase
+        .from("appointments")
+        .update({ payment_status: "confirmed", paid_date: (0, date_1.todayBRT)() })
+        .eq("id", id)
+        .eq("business_id", businessId)
+        .in("payment_status", ["pending", "payment_expired"])
+        .select()
+        .single();
+    if (error)
+        throw new Error(error.message);
+    if (!data)
+        throw new Error("Agendamento não encontrado ou já confirmado");
+    console.log(`[manual-confirm] confirmed appointment ${id}`);
+    return data;
+}
 async function getAppointmentsByDate(businessId, date) {
     const { data, error } = await supabase
         .from("appointments")
@@ -362,6 +529,7 @@ async function getAppointmentsByDate(businessId, date) {
     `)
         .eq("business_id", businessId)
         .eq("appointment_date", date)
+        .in("payment_status", ACTIVE_APPOINTMENT_STATUSES)
         .order("start_time", { ascending: true });
     if (error)
         throw new Error(error.message);

@@ -69,6 +69,52 @@ exports.appointmentsRouter.post("/", async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
+async function handlePendingPayments(req, res) {
+    const { businessId } = req.query;
+    console.info("[pending-payments][backend][route-entry]", {
+        method: req.method,
+        path: req.path,
+        originalUrl: req.originalUrl,
+        businessId,
+    });
+    if (!businessId) {
+        res.status(400).json({ error: "businessId obrigatório" });
+        return;
+    }
+    try {
+        res.json(await (0, appointmentsService_1.getPendingPayments)(businessId));
+    }
+    catch (err) {
+        console.error("[pending-payments][backend][route-error]", {
+            message: err?.message,
+            code: err?.code,
+            details: err?.details,
+            hint: err?.hint,
+            stack: err?.stack,
+        });
+        res.status(500).json({
+            error: err.message,
+            code: err?.code,
+            details: err?.details,
+            hint: err?.hint,
+        });
+    }
+}
+exports.appointmentsRouter.get("/pending-payments", handlePendingPayments);
+exports.appointmentsRouter.post("/:id/confirm-manual", async (req, res) => {
+    const { id } = req.params;
+    const { businessId } = req.query;
+    if (!businessId) {
+        res.status(400).json({ error: "businessId obrigatório" });
+        return;
+    }
+    try {
+        res.json(await (0, appointmentsService_1.confirmAppointmentManually)(id, businessId));
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
 exports.appointmentsRouter.put("/:id", async (req, res) => {
     const { businessId } = req.query;
     const { id } = req.params;

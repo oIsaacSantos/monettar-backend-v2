@@ -40,6 +40,14 @@ const publicBookingRateLimit = rateLimit({
 app.use(cors());
 app.use(express.json());
 
+app.get("/healthz", (_req, res) => {
+  res.json({
+    ok: true,
+    source: "backend-v2",
+    timestamp: Date.now(),
+  });
+});
+
 app.get("/api/health", (req, res) => {
   res.json({ status: "ok" });
 });

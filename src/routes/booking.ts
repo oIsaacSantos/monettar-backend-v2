@@ -2,6 +2,7 @@ import { Router, Request, Response } from "express";
 import { createClient } from "@supabase/supabase-js";
 import { todayBRT } from "../utils/date";
 import { validateAppointmentSlot } from "../services/schedulingService";
+import { findActiveClientByPhone } from "../services/clientsService";
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -29,6 +30,22 @@ async function saveAppointmentServices(
   }));
   const fallback = await supabase.from("appointment_services").insert(fallbackRows);
   if (fallback.error) throw new Error(fallback.error.message);
+}
+
+function normalizeBookingGender(gender: string | null | undefined): string | null {
+  if (!gender) return null;
+  const map: Record<string, string> = {
+    feminino: "female",
+    masculino: "male",
+    "nao-binario": "other",
+    "prefiro-nao-informar": "not_informed",
+    outro: "other",
+    female: "female",
+    male: "male",
+    other: "other",
+    not_informed: "not_informed",
+  };
+  return map[gender] ?? null;
 }
 
 // Busca negócio pelo slug
@@ -173,7 +190,21 @@ bookingRouter.patch("/:slug/appointment/:id/cancel", async (req: Request, res: R
 // Criar agendamento (múltiplos serviços)
 bookingRouter.post("/:slug/appointment", async (req: Request, res: Response) => {
   const { slug } = req.params;
-  const { phone, name, birthdate, gender, genderCustom, serviceIds, totalDuration, serviceId, date, startTime } = req.body;
+  const {
+    phone,
+    name,
+    birth_date,
+    birthDate,
+    birthdate,
+    gender,
+    genderCustom,
+    serviceIds,
+    totalDuration,
+    serviceId,
+    date,
+    startTime,
+  } = req.body;
+  const bookingBirthDate = birth_date ?? birthDate ?? birthdate;
 
   const ids: string[] = serviceIds ?? (serviceId ? [serviceId] : []);
   if (!ids.length) { res.status(400).json({ error: "serviceIds obrigatório" }); return; }
@@ -183,23 +214,18 @@ bookingRouter.post("/:slug/appointment", async (req: Request, res: Response) => 
   if (!business) { res.status(404).json({ error: "Negócio não encontrado" }); return; }
 
   try {
-    const normalized = phone.replace(/\D/g, "");
+    const normalized = String(phone).replace(/\D/g, "");
     let clientId: string;
 
-    const { data: existing } = await supabase
-      .from("clients")
-      .select("id")
-      .eq("business_id", business.id)
-      .ilike("phone", `%${normalized.slice(-8)}%`)
-      .single();
+    const existing = await findActiveClientByPhone(business.id, phone);
 
     if (existing) {
       clientId = existing.id;
       const updates: Record<string, string | null> = {};
       if (name) updates.name = name;
-      if (birthdate) updates.birthdate = birthdate;
-      if (gender) updates.gender = gender;
-      if (genderCustom) updates.gender_custom = genderCustom;
+      if (bookingBirthDate && !existing.birth_date) updates.birth_date = bookingBirthDate;
+      const normalizedGender = normalizeBookingGender(gender);
+      if (normalizedGender) updates.gender = normalizedGender;
       if (Object.keys(updates).length > 0) {
         await supabase
           .from("clients")
@@ -208,15 +234,15 @@ bookingRouter.post("/:slug/appointment", async (req: Request, res: Response) => 
           .eq("business_id", business.id);
       }
     } else {
+      const normalizedGender = normalizeBookingGender(gender);
       const insertResult = await supabase
         .from("clients")
         .insert({
           business_id: business.id,
           name,
           phone: normalized,
-          birthdate: birthdate || null,
-          gender: gender || null,
-          gender_custom: genderCustom || null,
+          birth_date: bookingBirthDate || null,
+          gender: normalizedGender,
         })
         .select().single();
 
@@ -226,7 +252,12 @@ bookingRouter.post("/:slug/appointment", async (req: Request, res: Response) => 
       if (clientErr) {
         const fallback = await supabase
           .from("clients")
-          .insert({ business_id: business.id, name, phone: normalized })
+          .insert({
+            business_id: business.id,
+            name,
+            phone: normalized,
+            birth_date: bookingBirthDate || null,
+          })
           .select().single();
         clientData = fallback.data;
         clientErr = fallback.error;
@@ -285,6 +316,8 @@ bookingRouter.post("/:slug/appointment", async (req: Request, res: Response) => 
       return;
     }
 
+    const paymentExpiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+
     const { data: appointment, error: apptError } = await supabase
       .from("appointments")
       .insert({
@@ -297,6 +330,7 @@ bookingRouter.post("/:slug/appointment", async (req: Request, res: Response) => 
         charged_amount: totalCharged,
         discount: 0,
         payment_status: "pending",
+        payment_expires_at: paymentExpiresAt,
       })
       .select().single();
 

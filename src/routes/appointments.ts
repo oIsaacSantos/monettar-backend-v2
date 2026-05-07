@@ -1,5 +1,5 @@
 import { Router, Request, Response } from "express";
-import { createAppointment, deleteAppointment, getAllAppointments, getAppointmentsByDate, getAppointmentsByMonth, updateAppointment } from "../services/appointmentsService";
+import { confirmAppointmentManually, createAppointment, deleteAppointment, getAllAppointments, getAppointmentsByDate, getAppointmentsByMonth, getPendingPayments, updateAppointment } from "../services/appointmentsService";
 import { getAvailableSlots, validateAppointmentSlot } from "../services/schedulingService";
 
 export const appointmentsRouter = Router();
@@ -71,6 +71,47 @@ appointmentsRouter.post("/", async (req: Request, res: Response) => {
       res.status(400).json({ error: err.message, code: err.code, overrideable: false });
       return;
     }
+    res.status(500).json({ error: err.message });
+  }
+});
+
+async function handlePendingPayments(req: Request, res: Response) {
+  const { businessId } = req.query;
+  console.info("[pending-payments][backend][route-entry]", {
+    method: req.method,
+    path: req.path,
+    originalUrl: req.originalUrl,
+    businessId,
+  });
+  if (!businessId) { res.status(400).json({ error: "businessId obrigatório" }); return; }
+  try {
+    res.json(await getPendingPayments(businessId as string));
+  } catch (err: any) {
+    console.error("[pending-payments][backend][route-error]", {
+      message: err?.message,
+      code: err?.code,
+      details: err?.details,
+      hint: err?.hint,
+      stack: err?.stack,
+    });
+    res.status(500).json({
+      error: err.message,
+      code: err?.code,
+      details: err?.details,
+      hint: err?.hint,
+    });
+  }
+}
+
+appointmentsRouter.get("/pending-payments", handlePendingPayments);
+
+appointmentsRouter.post("/:id/confirm-manual", async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { businessId } = req.query;
+  if (!businessId) { res.status(400).json({ error: "businessId obrigatório" }); return; }
+  try {
+    res.json(await confirmAppointmentManually(id, businessId as string));
+  } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });

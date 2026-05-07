@@ -358,6 +358,7 @@ export async function getAppointmentsByMonth(businessId: string, year: number, m
     .eq("business_id", businessId)
     .gte("appointment_date", start)
     .lte("appointment_date", end)
+    .in("payment_status", ACTIVE_APPOINTMENT_STATUSES)
     .order("appointment_date", { ascending: true })
     .order("start_time", { ascending: true });
   if (error) throw new Error(error.message);
@@ -399,6 +400,152 @@ export async function autoConfirmPassedAppointments(businessId: string): Promise
     .in("id", idsToConfirm);
 }
 
+const ACTIVE_APPOINTMENT_STATUSES = ["confirmed", "paid"];
+
+export async function expirePendingAppointments(): Promise<{ expired: number }> {
+  const now = new Date().toISOString();
+  const { data, error } = await supabase
+    .from("appointments")
+    .update({ payment_status: "payment_expired" })
+    .eq("payment_status", "pending")
+    .is("paid_date", null)
+    .lt("payment_expires_at", now)
+    .select("id");
+
+  if (error) {
+    console.error("[expire] error:", error.message);
+    throw new Error(error.message);
+  }
+  const expired = data?.length ?? 0;
+  if (expired > 0) console.log(`[expire] ${expired} appointments set to payment_expired`);
+  return { expired };
+}
+
+export async function reconcileMercadoPagoPayments(): Promise<{ checked: number; confirmed: number; errors: number }> {
+  const { data: candidates, error } = await supabase
+    .from("appointments")
+    .select("id, business_id, payment_status, mp_payment_id")
+    .in("payment_status", ["pending", "payment_expired"])
+    .not("mp_payment_id", "is", null);
+
+  if (error) throw new Error(error.message);
+  if (!candidates?.length) {
+    console.log("[reconcile] no candidates found");
+    return { checked: 0, confirmed: 0, errors: 0 };
+  }
+
+  console.log(`[reconcile] checking ${candidates.length} appointments`);
+
+  const businessIds = [...new Set(candidates.map((a: any) => a.business_id as string))];
+  const { data: businesses } = await supabase
+    .from("businesses")
+    .select("id, mp_access_token")
+    .in("id", businessIds);
+
+  const tokenMap = new Map<string, string>(
+    (businesses ?? []).map((b: any) => [b.id, (b.mp_access_token as string)?.trim() || process.env.MP_ACCESS_TOKEN!])
+  );
+
+  const { getPaymentDetails } = await import("./paymentService");
+
+  let checked = 0;
+  let confirmed = 0;
+  let errors = 0;
+
+  for (const appt of candidates as any[]) {
+    if (!appt.mp_payment_id) continue;
+    checked++;
+    try {
+      const accessToken = tokenMap.get(appt.business_id) ?? process.env.MP_ACCESS_TOKEN!;
+      const details = await getPaymentDetails(accessToken, appt.mp_payment_id);
+      console.log(`[reconcile] appt=${appt.id} was=${appt.payment_status} MP=${details.status}`);
+
+      if (details.status === "approved") {
+        const { error: updateError } = await supabase
+          .from("appointments")
+          .update({ payment_status: "confirmed", paid_date: todayBRT() })
+          .eq("id", appt.id);
+        if (updateError) {
+          console.error(`[reconcile] update error ${appt.id}:`, updateError.message);
+          errors++;
+        } else {
+          console.log(`[reconcile] confirmed ${appt.id}`);
+          confirmed++;
+        }
+      }
+    } catch (err: any) {
+      console.error(`[reconcile] error for ${appt.id}:`, err.message);
+      errors++;
+    }
+  }
+
+  console.log(`[reconcile] done: checked=${checked} confirmed=${confirmed} errors=${errors}`);
+  return { checked, confirmed, errors };
+}
+
+export async function getPendingPayments(businessId: string) {
+  const { data, error } = await supabase
+    .from("appointments")
+    .select(`
+      id,
+      appointment_date,
+      start_time,
+      end_time,
+      charged_amount,
+      discount,
+      payment_status,
+      payment_expires_at,
+      mp_payment_id,
+      clients(id, name, phone),
+      services(id, name, duration_minutes),
+      appointment_services(service_id, services(id, name, current_price, duration_minutes))
+    `)
+    .eq("business_id", businessId)
+    .in("payment_status", ["pending", "payment_expired"])
+    .order("appointment_date", { ascending: true })
+    .order("start_time", { ascending: true });
+
+  if (error) {
+    console.error("[pending-payments][backend][supabase-error]", {
+      message: error.message,
+      code: error.code,
+      details: error.details,
+      hint: error.hint,
+      full: error,
+    });
+    const wrapped = new Error(error.message) as Error & {
+      code?: string;
+      details?: string;
+      hint?: string;
+    };
+    wrapped.code = error.code;
+    wrapped.details = error.details;
+    wrapped.hint = error.hint;
+    throw wrapped;
+  }
+
+  return (data ?? []).map((a: any) => normalizeAppointmentServices({
+    ...a,
+    clients: Array.isArray(a.clients) ? (a.clients[0] ?? null) : a.clients,
+  }));
+}
+
+export async function confirmAppointmentManually(id: string, businessId: string) {
+  const { data, error } = await supabase
+    .from("appointments")
+    .update({ payment_status: "confirmed", paid_date: todayBRT() })
+    .eq("id", id)
+    .eq("business_id", businessId)
+    .in("payment_status", ["pending", "payment_expired"])
+    .select()
+    .single();
+
+  if (error) throw new Error(error.message);
+  if (!data) throw new Error("Agendamento não encontrado ou já confirmado");
+  console.log(`[manual-confirm] confirmed appointment ${id}`);
+  return data;
+}
+
 export async function getAppointmentsByDate(businessId: string, date: string) {
   const { data, error } = await supabase
     .from("appointments")
@@ -418,6 +565,7 @@ export async function getAppointmentsByDate(businessId: string, date: string) {
     `)
     .eq("business_id", businessId)
     .eq("appointment_date", date)
+    .in("payment_status", ACTIVE_APPOINTMENT_STATUSES)
     .order("start_time", { ascending: true });
 
   if (error) throw new Error(error.message);
