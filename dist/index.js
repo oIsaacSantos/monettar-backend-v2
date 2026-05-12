@@ -27,6 +27,7 @@ const serviceSupplies_1 = require("./routes/serviceSupplies");
 const financial_1 = require("./routes/financial");
 const productSales_1 = require("./routes/productSales");
 const products_1 = require("./routes/products");
+const anamnesis_1 = require("./routes/anamnesis");
 const auth_2 = require("./middleware/auth");
 dotenv_1.default.config({ path: path_1.default.resolve(__dirname, "../.env") });
 const app = (0, express_1.default)();
@@ -60,6 +61,7 @@ app.use("/api/service-supplies", auth_2.requireBusinessAccess, serviceSupplies_1
 app.use("/api/financial", auth_2.requireBusinessAccess, financial_1.financialRouter);
 app.use("/api/products", auth_2.requireBusinessAccess, products_1.productsRouter);
 app.use("/api/product-sales", auth_2.requireBusinessAccess, productSales_1.productSalesRouter);
+app.use("/api/anamnesis", auth_2.requireBusinessAccess, anamnesis_1.anamnesisRouter);
 app.use("/api/business", auth_2.requireBusinessAccess, business_1.businessRouter);
 app.use("/api/schedule-overrides", auth_2.requireBusinessAccess, scheduleOverrides_1.scheduleOverridesRouter);
 app.use("/api/booking", publicBookingRateLimit, booking_1.bookingRouter);
