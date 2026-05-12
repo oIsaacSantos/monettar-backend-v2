@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.getServices = getServices;
 exports.createService = createService;
 exports.updateService = updateService;
+exports.calculateServiceCost = calculateServiceCost;
 exports.reorderServices = reorderServices;
 const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
@@ -128,6 +129,26 @@ async function updateService(id, businessId, payload) {
     if (error)
         throw new Error(error.message);
     return data;
+}
+async function calculateServiceCost(serviceId, businessId) {
+    const { data: service, error } = await supabase
+        .from("services")
+        .select("current_price, duration_minutes, material_cost_estimate")
+        .eq("id", serviceId)
+        .eq("business_id", businessId)
+        .single();
+    if (error)
+        throw new Error(error.message);
+    const calculated = await (0, suppliesService_1.calculateServiceSupplyCost)(serviceId, businessId);
+    const operational = await (0, financeService_1.calculateOperationalCostPerMinute)(businessId).catch(() => ({
+        operationalCostPerMinute: 0,
+    }));
+    const suppliesCost = calculated.cost;
+    const materialCost = Number(service.material_cost_estimate ?? 0);
+    const operationalCost = Number(service.duration_minutes ?? 0) * operational.operationalCostPerMinute;
+    const totalCost = suppliesCost + operationalCost;
+    const currentPrice = Number(service.current_price ?? 0);
+    return { suppliesCost, materialCost, totalCost, currentPrice };
 }
 async function reorderServices(businessId, serviceIds) {
     for (const [index, id] of serviceIds.entries()) {

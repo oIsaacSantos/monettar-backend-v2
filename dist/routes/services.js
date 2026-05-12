@@ -62,6 +62,22 @@ exports.servicesRouter.put("/:id", async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
+exports.servicesRouter.get("/:id/cost", async (req, res) => {
+    const { businessId } = req.query;
+    const { id } = req.params;
+    if (!businessId) {
+        res.status(400).json({ error: "businessId obrigatorio" });
+        return;
+    }
+    try {
+        const { suppliesCost, materialCost, totalCost, currentPrice } = await (0, servicesService_1.calculateServiceCost)(id, businessId);
+        const margin = currentPrice > 0 ? ((currentPrice - totalCost) / currentPrice) * 100 : 0;
+        res.json({ serviceId: id, suppliesCost, materialCost, totalCost, margin });
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
 exports.servicesRouter.get("/:serviceId/supplies", async (req, res) => {
     const { businessId } = req.query;
     const { serviceId } = req.params;

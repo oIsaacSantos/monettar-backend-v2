@@ -140,6 +140,33 @@ export async function updateService(id: string, businessId: string, payload: {
   return data;
 }
 
+export async function calculateServiceCost(
+  serviceId: string,
+  businessId: string
+): Promise<{ suppliesCost: number; materialCost: number; totalCost: number; currentPrice: number }> {
+  const { data: service, error } = await supabase
+    .from("services")
+    .select("current_price, duration_minutes, material_cost_estimate")
+    .eq("id", serviceId)
+    .eq("business_id", businessId)
+    .single();
+
+  if (error) throw new Error(error.message);
+
+  const calculated = await calculateServiceSupplyCost(serviceId, businessId);
+  const operational = await calculateOperationalCostPerMinute(businessId).catch(() => ({
+    operationalCostPerMinute: 0,
+  }));
+
+  const suppliesCost = calculated.cost;
+  const materialCost = Number(service.material_cost_estimate ?? 0);
+  const operationalCost = Number(service.duration_minutes ?? 0) * operational.operationalCostPerMinute;
+  const totalCost = suppliesCost + operationalCost;
+  const currentPrice = Number(service.current_price ?? 0);
+
+  return { suppliesCost, materialCost, totalCost, currentPrice };
+}
+
 export async function reorderServices(businessId: string, serviceIds: string[]) {
   for (const [index, id] of serviceIds.entries()) {
     const { error } = await supabase

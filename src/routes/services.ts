@@ -1,5 +1,5 @@
 import { Router, Request, Response } from "express";
-import { createService, getServices, reorderServices, updateService } from "../services/servicesService";
+import { calculateServiceCost, createService, getServices, reorderServices, updateService } from "../services/servicesService";
 import { addServiceSupply, getServiceSupplies } from "../services/suppliesService";
 
 export const servicesRouter = Router();
@@ -35,6 +35,17 @@ servicesRouter.put("/:id", async (req: Request, res: Response) => {
   if (!businessId) { res.status(400).json({ error: "businessId obrigatorio" }); return; }
   try {
     res.json(await updateService(id, businessId as string, req.body));
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+servicesRouter.get("/:id/cost", async (req: Request, res: Response) => {
+  const { businessId } = req.query;
+  const { id } = req.params;
+  if (!businessId) { res.status(400).json({ error: "businessId obrigatorio" }); return; }
+  try {
+    const { suppliesCost, materialCost, totalCost, currentPrice } = await calculateServiceCost(id, businessId as string);
+    const margin = currentPrice > 0 ? ((currentPrice - totalCost) / currentPrice) * 100 : 0;
+    res.json({ serviceId: id, suppliesCost, materialCost, totalCost, margin });
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
