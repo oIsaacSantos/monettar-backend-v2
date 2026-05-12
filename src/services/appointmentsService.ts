@@ -139,6 +139,7 @@ export async function createAppointment(payload: {
   appointment_type?: string | null;
   allowOverride?: boolean;
   forceScheduleOverride?: boolean;
+  customDurationMinutes?: number;
 }) {
   const primaryServiceId = payload.serviceIds?.length ? payload.serviceIds[0] : payload.serviceId;
   const idsToLink = payload.serviceIds?.length ? payload.serviceIds : [payload.serviceId];
@@ -168,6 +169,7 @@ export async function createAppointment(payload: {
       appointment_type: normalizeAppointmentType(payload.appointmentType ?? payload.appointment_type),
       notes: payload.notes?.trim() || null,
       quantity: 1,
+      ...(payload.customDurationMinutes !== undefined && { custom_duration_minutes: payload.customDurationMinutes }),
     })
     .select("id")
     .single();
@@ -213,6 +215,7 @@ export async function updateAppointment(
     notes?: string | null;
     allowOverride?: boolean;
     forceScheduleOverride?: boolean;
+    customDurationMinutes?: number;
   }
 ) {
   if (payload.serviceIds && payload.serviceIds.length === 0) {
@@ -257,7 +260,7 @@ export async function updateAppointment(
     });
 
     if (!computedEndTime && payload.startTime) {
-      const duration = payload.durationMinutes ?? snapshots.reduce(
+      const duration = payload.customDurationMinutes ?? payload.durationMinutes ?? snapshots.reduce(
         (sum, service) => sum + Number(service.duration_minutes ?? 0),
         0
       );
@@ -280,6 +283,7 @@ export async function updateAppointment(
     updatePayload.appointment_type = normalizeAppointmentType(payload.appointmentType ?? payload.appointment_type);
   }
   if (payload.notes !== undefined) updatePayload.notes = payload.notes?.trim() || null;
+  if (payload.customDurationMinutes !== undefined) updatePayload.custom_duration_minutes = payload.customDurationMinutes;
 
   if (Object.keys(updatePayload).length > 0) {
     const { error } = await supabase

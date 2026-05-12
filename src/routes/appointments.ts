@@ -5,7 +5,7 @@ import { getAvailableSlots, validateAppointmentSlot } from "../services/scheduli
 export const appointmentsRouter = Router();
 
 appointmentsRouter.post("/", async (req: Request, res: Response) => {
-  const { businessId, serviceId, serviceIds, clientId, appointmentDate, startTime, endTime, chargedAmount, status, notes, appointmentType, appointment_type, allowOverride, forceScheduleOverride } = req.body;
+  const { businessId, serviceId, serviceIds, clientId, appointmentDate, startTime, endTime, chargedAmount, status, notes, appointmentType, appointment_type, allowOverride, forceScheduleOverride, customDurationMinutes } = req.body;
   const primaryServiceId = (Array.isArray(serviceIds) && serviceIds.length > 0) ? serviceIds[0] : serviceId;
   const resolvedAllowOverride = Boolean(allowOverride ?? forceScheduleOverride);
   console.info("[manual-override-debug][backend][appointments:POST][received]", {
@@ -64,6 +64,7 @@ appointmentsRouter.post("/", async (req: Request, res: Response) => {
       status: status ?? "pending",
       notes,
       appointmentType: appointmentType ?? appointment_type,
+      customDurationMinutes: customDurationMinutes ? Number(customDurationMinutes) : undefined,
     });
     res.status(201).json(data);
   } catch (err: any) {

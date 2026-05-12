@@ -179,6 +179,7 @@ async function createAppointment(payload) {
         appointment_type: normalizeAppointmentType(payload.appointmentType ?? payload.appointment_type),
         notes: payload.notes?.trim() || null,
         quantity: 1,
+        ...(payload.customDurationMinutes !== undefined && { custom_duration_minutes: payload.customDurationMinutes }),
     })
         .select("id")
         .single();
@@ -240,7 +241,7 @@ async function updateAppointment(id, businessId, payload) {
             };
         });
         if (!computedEndTime && payload.startTime) {
-            const duration = payload.durationMinutes ?? snapshots.reduce((sum, service) => sum + Number(service.duration_minutes ?? 0), 0);
+            const duration = payload.customDurationMinutes ?? payload.durationMinutes ?? snapshots.reduce((sum, service) => sum + Number(service.duration_minutes ?? 0), 0);
             if (duration > 0)
                 computedEndTime = addMinutes(payload.startTime, duration);
         }
@@ -270,6 +271,8 @@ async function updateAppointment(id, businessId, payload) {
     }
     if (payload.notes !== undefined)
         updatePayload.notes = payload.notes?.trim() || null;
+    if (payload.customDurationMinutes !== undefined)
+        updatePayload.custom_duration_minutes = payload.customDurationMinutes;
     if (Object.keys(updatePayload).length > 0) {
         const { error } = await supabase
             .from("appointments")

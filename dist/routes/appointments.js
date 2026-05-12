@@ -6,7 +6,7 @@ const appointmentsService_1 = require("../services/appointmentsService");
 const schedulingService_1 = require("../services/schedulingService");
 exports.appointmentsRouter = (0, express_1.Router)();
 exports.appointmentsRouter.post("/", async (req, res) => {
-    const { businessId, serviceId, serviceIds, clientId, appointmentDate, startTime, endTime, chargedAmount, status, notes, appointmentType, appointment_type, allowOverride, forceScheduleOverride } = req.body;
+    const { businessId, serviceId, serviceIds, clientId, appointmentDate, startTime, endTime, chargedAmount, status, notes, appointmentType, appointment_type, allowOverride, forceScheduleOverride, customDurationMinutes } = req.body;
     const primaryServiceId = (Array.isArray(serviceIds) && serviceIds.length > 0) ? serviceIds[0] : serviceId;
     const resolvedAllowOverride = Boolean(allowOverride ?? forceScheduleOverride);
     console.info("[manual-override-debug][backend][appointments:POST][received]", {
@@ -58,6 +58,7 @@ exports.appointmentsRouter.post("/", async (req, res) => {
             status: status ?? "pending",
             notes,
             appointmentType: appointmentType ?? appointment_type,
+            customDurationMinutes: customDurationMinutes ? Number(customDurationMinutes) : undefined,
         });
         res.status(201).json(data);
     }
