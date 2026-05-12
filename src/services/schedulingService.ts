@@ -54,6 +54,7 @@ const BRT_TIME_ZONE = "America/Sao_Paulo";
 const OVERRIDEABLE_VALIDATION_CODES = new Set<SchedulingValidationCode>([
   "DAY_NOT_WORKING",
   "OUTSIDE_WORKING_HOURS",
+  "LUNCH_BREAK",
   "APPOINTMENT_CONFLICT",
   "BUFFER_CONFLICT",
 ]);
