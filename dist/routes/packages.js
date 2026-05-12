@@ -10,9 +10,9 @@ const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
 const supabase = (0, supabase_js_1.createClient)(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 exports.packagesRouter = (0, express_1.Router)();
-// Listar pacotes de um serviço
+// ─── Service Packages (templates) ────────────────────────────────────────────
 exports.packagesRouter.get("/", async (req, res) => {
-    const { businessId, serviceId } = req.query;
+    const { businessId, serviceId, includeInactive } = req.query;
     if (!businessId) {
         res.status(400).json({ error: "businessId obrigatório" });
         return;
@@ -21,7 +21,9 @@ exports.packagesRouter.get("/", async (req, res) => {
         .from("service_packages")
         .select("*")
         .eq("business_id", businessId)
-        .eq("active", true);
+        .order("created_at", { ascending: true });
+    if (!includeInactive)
+        query = query.eq("active", true);
     if (serviceId)
         query = query.eq("service_id", serviceId);
     const { data, error } = await query;
@@ -31,23 +33,26 @@ exports.packagesRouter.get("/", async (req, res) => {
     }
     res.json(data ?? []);
 });
-// Criar pacote
 exports.packagesRouter.post("/", async (req, res) => {
     const { businessId } = req.query;
     if (!businessId) {
         res.status(400).json({ error: "businessId obrigatório" });
         return;
     }
-    const { serviceId, name, sessions, price, validityDays } = req.body;
+    const { serviceId, name, sessions, price, validityDays, minIntervalDays, maxIntervalDays, description, durationMinutes, } = req.body;
     const { data, error } = await supabase
         .from("service_packages")
         .insert({
         business_id: businessId,
         service_id: serviceId,
         name,
-        sessions,
+        sessions: sessions ?? 3,
         price,
         validity_days: validityDays ?? 20,
+        min_interval_days: minIntervalDays ?? 1,
+        max_interval_days: maxIntervalDays ?? 30,
+        description: description ?? null,
+        duration_minutes: durationMinutes ?? null,
     })
         .select()
         .single();
@@ -57,7 +62,67 @@ exports.packagesRouter.post("/", async (req, res) => {
     }
     res.status(201).json(data);
 });
-// Pacotes do cliente
+exports.packagesRouter.put("/:id", async (req, res) => {
+    const { businessId } = req.query;
+    const { id } = req.params;
+    if (!businessId) {
+        res.status(400).json({ error: "businessId obrigatório" });
+        return;
+    }
+    const { name, sessions, price, validityDays, minIntervalDays, maxIntervalDays, description, durationMinutes, active, } = req.body;
+    const updates = {};
+    if (name !== undefined)
+        updates.name = name;
+    if (sessions !== undefined)
+        updates.sessions = sessions;
+    if (price !== undefined)
+        updates.price = price;
+    if (validityDays !== undefined)
+        updates.validity_days = validityDays;
+    if (minIntervalDays !== undefined)
+        updates.min_interval_days = minIntervalDays;
+    if (maxIntervalDays !== undefined)
+        updates.max_interval_days = maxIntervalDays;
+    if (description !== undefined)
+        updates.description = description;
+    if (durationMinutes !== undefined)
+        updates.duration_minutes = durationMinutes;
+    if (active !== undefined)
+        updates.active = active;
+    const { data, error } = await supabase
+        .from("service_packages")
+        .update(updates)
+        .eq("id", id)
+        .eq("business_id", businessId)
+        .select()
+        .single();
+    if (error) {
+        res.status(500).json({ error: error.message });
+        return;
+    }
+    res.json(data);
+});
+exports.packagesRouter.delete("/:id", async (req, res) => {
+    const { businessId } = req.query;
+    const { id } = req.params;
+    if (!businessId) {
+        res.status(400).json({ error: "businessId obrigatório" });
+        return;
+    }
+    const { data, error } = await supabase
+        .from("service_packages")
+        .update({ active: false })
+        .eq("id", id)
+        .eq("business_id", businessId)
+        .select()
+        .single();
+    if (error) {
+        res.status(500).json({ error: error.message });
+        return;
+    }
+    res.json(data);
+});
+// ─── Client Packages ──────────────────────────────────────────────────────────
 exports.packagesRouter.get("/client", async (req, res) => {
     const { businessId, clientId } = req.query;
     if (!businessId || !clientId) {
@@ -66,19 +131,65 @@ exports.packagesRouter.get("/client", async (req, res) => {
     }
     const { data, error } = await supabase
         .from("client_packages")
-        .select("*, service_packages(name, sessions, service_id)")
+        .select(`
+      *,
+      package:service_packages(id, name, sessions, service_id, price, min_interval_days, max_interval_days, description, duration_minutes),
+      sessions:client_package_sessions(id, session_number, appointment_id, notes, created_at)
+    `)
         .eq("business_id", businessId)
         .eq("client_id", clientId)
-        .eq("status", "active");
+        .order("purchased_at", { ascending: false });
     if (error) {
         res.status(500).json({ error: error.message });
         return;
     }
     res.json(data ?? []);
 });
-// Usar sessão do pacote
+exports.packagesRouter.post("/assign", async (req, res) => {
+    const { businessId, clientId, packageId } = req.body;
+    if (!businessId || !clientId || !packageId) {
+        res.status(400).json({ error: "businessId, clientId e packageId obrigatórios" });
+        return;
+    }
+    const { data: pkg, error: pkgErr } = await supabase
+        .from("service_packages")
+        .select("*")
+        .eq("id", packageId)
+        .eq("business_id", businessId)
+        .single();
+    if (pkgErr || !pkg) {
+        res.status(404).json({ error: "Pacote não encontrado" });
+        return;
+    }
+    if (!pkg.active) {
+        res.status(400).json({ error: "Pacote inativo" });
+        return;
+    }
+    const expiresAt = pkg.validity_days
+        ? new Date(Date.now() + pkg.validity_days * 24 * 60 * 60 * 1000).toISOString()
+        : null;
+    const { data: cp, error: cpErr } = await supabase
+        .from("client_packages")
+        .insert({
+        business_id: businessId,
+        client_id: clientId,
+        package_id: packageId,
+        sessions_total: pkg.sessions,
+        sessions_used: 0,
+        expires_at: expiresAt,
+        status: "active",
+        package_name: pkg.name,
+    })
+        .select()
+        .single();
+    if (cpErr) {
+        res.status(500).json({ error: cpErr.message });
+        return;
+    }
+    res.status(201).json(cp);
+});
 exports.packagesRouter.post("/use-session", async (req, res) => {
-    const { clientPackageId } = req.body;
+    const { clientPackageId, appointmentId } = req.body;
     const { data: pkg } = await supabase
         .from("client_packages")
         .select("*")
@@ -92,17 +203,32 @@ exports.packagesRouter.post("/use-session", async (req, res) => {
         res.status(400).json({ error: "Pacote esgotado" });
         return;
     }
-    const newUsed = pkg.sessions_used + 1;
-    const newStatus = newUsed >= pkg.sessions_total ? "completed" : "active";
-    const { data, error } = await supabase
+    const sessionNumber = pkg.sessions_used + 1;
+    const newStatus = sessionNumber >= pkg.sessions_total ? "completed" : "active";
+    const { data: updated, error: updateErr } = await supabase
         .from("client_packages")
-        .update({ sessions_used: newUsed, status: newStatus })
+        .update({ sessions_used: sessionNumber, status: newStatus })
         .eq("id", clientPackageId)
         .select()
         .single();
-    if (error) {
-        res.status(500).json({ error: error.message });
+    if (updateErr) {
+        res.status(500).json({ error: updateErr.message });
         return;
     }
-    res.json(data);
+    const { data: session } = await supabase
+        .from("client_package_sessions")
+        .insert({
+        client_package_id: clientPackageId,
+        appointment_id: appointmentId ?? null,
+        session_number: sessionNumber,
+    })
+        .select()
+        .single();
+    if (session && appointmentId) {
+        await supabase
+            .from("appointments")
+            .update({ client_package_session_id: session.id })
+            .eq("id", appointmentId);
+    }
+    res.json({ clientPackage: updated, session: session ?? null });
 });
