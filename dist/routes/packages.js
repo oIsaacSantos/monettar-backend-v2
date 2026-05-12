@@ -10,6 +10,9 @@ const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
 const supabase = (0, supabase_js_1.createClient)(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 exports.packagesRouter = (0, express_1.Router)();
+function isMissingPaymentModeColumn(error) {
+    return String(error?.message ?? "").includes("payment_mode") || String(error?.details ?? "").includes("payment_mode");
+}
 // ─── Service Packages (templates) ────────────────────────────────────────────
 exports.packagesRouter.get("/", async (req, res) => {
     const { businessId, serviceId, includeInactive } = req.query;
@@ -19,7 +22,7 @@ exports.packagesRouter.get("/", async (req, res) => {
     }
     let query = supabase
         .from("service_packages")
-        .select("*")
+        .select("*, services(id, name)")
         .eq("business_id", businessId)
         .order("created_at", { ascending: true });
     if (!includeInactive)
@@ -39,10 +42,8 @@ exports.packagesRouter.post("/", async (req, res) => {
         res.status(400).json({ error: "businessId obrigatório" });
         return;
     }
-    const { serviceId, name, sessions, price, validityDays, minIntervalDays, maxIntervalDays, description, durationMinutes, } = req.body;
-    const { data, error } = await supabase
-        .from("service_packages")
-        .insert({
+    const { serviceId, name, sessions, price, validityDays, minIntervalDays, maxIntervalDays, description, durationMinutes, paymentMode, } = req.body;
+    const insertPayload = {
         business_id: businessId,
         service_id: serviceId,
         name,
@@ -53,9 +54,23 @@ exports.packagesRouter.post("/", async (req, res) => {
         max_interval_days: maxIntervalDays ?? 30,
         description: description ?? null,
         duration_minutes: durationMinutes ?? null,
-    })
+        payment_mode: paymentMode ?? "upfront",
+    };
+    let { data, error } = await supabase
+        .from("service_packages")
+        .insert(insertPayload)
         .select()
         .single();
+    if (error && isMissingPaymentModeColumn(error)) {
+        const { payment_mode, ...fallbackPayload } = insertPayload;
+        const fallback = await supabase
+            .from("service_packages")
+            .insert(fallbackPayload)
+            .select()
+            .single();
+        data = fallback.data;
+        error = fallback.error;
+    }
     if (error) {
         res.status(500).json({ error: error.message });
         return;
@@ -69,7 +84,7 @@ exports.packagesRouter.put("/:id", async (req, res) => {
         res.status(400).json({ error: "businessId obrigatório" });
         return;
     }
-    const { name, sessions, price, validityDays, minIntervalDays, maxIntervalDays, description, durationMinutes, active, } = req.body;
+    const { name, sessions, price, validityDays, minIntervalDays, maxIntervalDays, description, durationMinutes, active, paymentMode, } = req.body;
     const updates = {};
     if (name !== undefined)
         updates.name = name;
@@ -89,13 +104,34 @@ exports.packagesRouter.put("/:id", async (req, res) => {
         updates.duration_minutes = durationMinutes;
     if (active !== undefined)
         updates.active = active;
-    const { data, error } = await supabase
+    if (paymentMode !== undefined)
+        updates.payment_mode = paymentMode;
+    let { data, error } = await supabase
         .from("service_packages")
         .update(updates)
         .eq("id", id)
         .eq("business_id", businessId)
         .select()
         .single();
+    if (error && isMissingPaymentModeColumn(error)) {
+        const { payment_mode, ...fallbackUpdates } = updates;
+        const fallback = Object.keys(fallbackUpdates).length > 0
+            ? await supabase
+                .from("service_packages")
+                .update(fallbackUpdates)
+                .eq("id", id)
+                .eq("business_id", businessId)
+                .select()
+                .single()
+            : await supabase
+                .from("service_packages")
+                .select()
+                .eq("id", id)
+                .eq("business_id", businessId)
+                .single();
+        data = fallback.data;
+        error = fallback.error;
+    }
     if (error) {
         res.status(500).json({ error: error.message });
         return;
@@ -153,16 +189,30 @@ exports.packagesRouter.get("/client", async (req, res) => {
         res.status(400).json({ error: "businessId e clientId obrigatórios" });
         return;
     }
-    const { data, error } = await supabase
+    let { data, error } = await supabase
         .from("client_packages")
         .select(`
       *,
-      package:service_packages(id, name, sessions, service_id, price, min_interval_days, max_interval_days, description, duration_minutes),
+      package:service_packages(id, name, sessions, service_id, price, min_interval_days, max_interval_days, description, duration_minutes, payment_mode),
       sessions:client_package_sessions(id, session_number, appointment_id, notes, created_at)
     `)
         .eq("business_id", businessId)
         .eq("client_id", clientId)
         .order("purchased_at", { ascending: false });
+    if (error && isMissingPaymentModeColumn(error)) {
+        const fallback = await supabase
+            .from("client_packages")
+            .select(`
+        *,
+        package:service_packages(id, name, sessions, service_id, price, min_interval_days, max_interval_days, description, duration_minutes),
+        sessions:client_package_sessions(id, session_number, appointment_id, notes, created_at)
+      `)
+            .eq("business_id", businessId)
+            .eq("client_id", clientId)
+            .order("purchased_at", { ascending: false });
+        data = fallback.data;
+        error = fallback.error;
+    }
     if (error) {
         res.status(500).json({ error: error.message });
         return;

@@ -81,6 +81,7 @@ async function getAppointmentById(id: string, businessId: string) {
       discount,
       payment_status,
       appointment_type,
+      custom_duration_minutes,
       notes,
       clients(id, name, phone),
       services(id, name, duration_minutes),
@@ -139,7 +140,7 @@ export async function createAppointment(payload: {
   appointment_type?: string | null;
   allowOverride?: boolean;
   forceScheduleOverride?: boolean;
-  customDurationMinutes?: number;
+  customDurationMinutes?: number | null;
 }) {
   const primaryServiceId = payload.serviceIds?.length ? payload.serviceIds[0] : payload.serviceId;
   const idsToLink = payload.serviceIds?.length ? payload.serviceIds : [payload.serviceId];
@@ -215,7 +216,7 @@ export async function updateAppointment(
     notes?: string | null;
     allowOverride?: boolean;
     forceScheduleOverride?: boolean;
-    customDurationMinutes?: number;
+    customDurationMinutes?: number | null;
   }
 ) {
   if (payload.serviceIds && payload.serviceIds.length === 0) {
@@ -329,6 +330,7 @@ export async function getAllAppointments(businessId: string, page: number, limit
       discount,
       payment_status,
       appointment_type,
+      custom_duration_minutes,
       notes,
       clients(id, name, phone),
       services(id, name, duration_minutes),
@@ -358,7 +360,7 @@ export async function getAppointmentsByMonth(businessId: string, year: number, m
   const end = `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
   const { data, error } = await supabase
     .from("appointments")
-    .select(`id, appointment_date, start_time, end_time, charged_amount, discount, payment_status, appointment_type, notes, clients(id, name, phone), services(id, name, duration_minutes), appointment_services(service_id, services(id, name, current_price, duration_minutes))`)
+    .select(`id, appointment_date, start_time, end_time, charged_amount, discount, payment_status, appointment_type, custom_duration_minutes, notes, clients(id, name, phone), services(id, name, duration_minutes), appointment_services(service_id, services(id, name, current_price, duration_minutes))`)
     .eq("business_id", businessId)
     .gte("appointment_date", start)
     .lte("appointment_date", end)
@@ -500,6 +502,7 @@ export async function getPendingPayments(businessId: string) {
       payment_status,
       payment_expires_at,
       mp_payment_id,
+      custom_duration_minutes,
       clients(id, name, phone),
       services(id, name, duration_minutes),
       appointment_services(service_id, services(id, name, current_price, duration_minutes))
@@ -562,6 +565,7 @@ export async function getAppointmentsByDate(businessId: string, date: string) {
       discount,
       payment_status,
       appointment_type,
+      custom_duration_minutes,
       notes,
       clients(id, name, phone),
       services(id, name, duration_minutes),
@@ -580,4 +584,47 @@ export async function getAppointmentsByDate(businessId: string, date: string) {
       ? (appt.clients[0] ?? null)
       : appt.clients,
   }));
+}
+
+export async function getAppointmentsByDateRange(businessId: string, startDate: string, endDate: string) {
+  const { data, error } = await supabase
+    .from("appointments")
+    .select(`
+      id,
+      appointment_date,
+      start_time,
+      end_time,
+      charged_amount,
+      discount,
+      payment_status,
+      appointment_type,
+      custom_duration_minutes,
+      notes,
+      clients(id, name, phone),
+      services(id, name, duration_minutes),
+      appointment_services(service_id, services(id, name, current_price, duration_minutes))
+    `)
+    .eq("business_id", businessId)
+    .gte("appointment_date", startDate)
+    .lte("appointment_date", endDate)
+    .in("payment_status", ACTIVE_APPOINTMENT_STATUSES)
+    .order("appointment_date", { ascending: true })
+    .order("start_time", { ascending: true });
+
+  if (error) throw new Error(error.message);
+
+  const grouped: Record<string, any[]> = {};
+  for (const appt of data ?? []) {
+    const normalized = normalizeAppointmentServices({
+      ...appt,
+      clients: Array.isArray(appt.clients)
+        ? (appt.clients[0] ?? null)
+        : appt.clients,
+    });
+    const key = normalized.appointment_date;
+    if (!grouped[key]) grouped[key] = [];
+    grouped[key].push(normalized);
+  }
+
+  return grouped;
 }

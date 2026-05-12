@@ -1,5 +1,5 @@
 import { Router, Request, Response } from "express";
-import { confirmAppointmentManually, createAppointment, deleteAppointment, getAllAppointments, getAppointmentsByDate, getAppointmentsByMonth, getPendingPayments, updateAppointment } from "../services/appointmentsService";
+import { confirmAppointmentManually, createAppointment, deleteAppointment, getAllAppointments, getAppointmentsByDate, getAppointmentsByDateRange, getAppointmentsByMonth, getPendingPayments, updateAppointment } from "../services/appointmentsService";
 import { getAvailableSlots, validateAppointmentSlot } from "../services/schedulingService";
 
 export const appointmentsRouter = Router();
@@ -233,6 +233,19 @@ appointmentsRouter.get("/by-month", async (req: Request, res: Response) => {
   }
   try {
     res.json(await getAppointmentsByMonth(businessId as string, Number(year), Number(month)));
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+appointmentsRouter.get("/by-range", async (req: Request, res: Response) => {
+  const { businessId, start, end } = req.query;
+  if (!businessId || !start || !end) {
+    res.status(400).json({ error: "businessId, start e end são obrigatórios" });
+    return;
+  }
+  try {
+    res.json(await getAppointmentsByDateRange(businessId as string, start as string, end as string));
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

@@ -229,6 +229,19 @@ exports.appointmentsRouter.get("/by-month", async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
+exports.appointmentsRouter.get("/by-range", async (req, res) => {
+    const { businessId, start, end } = req.query;
+    if (!businessId || !start || !end) {
+        res.status(400).json({ error: "businessId, start e end são obrigatórios" });
+        return;
+    }
+    try {
+        res.json(await (0, appointmentsService_1.getAppointmentsByDateRange)(businessId, start, end));
+    }
+    catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
 exports.appointmentsRouter.get("/by-date", async (req, res) => {
     const { businessId, date } = req.query;
     if (!businessId || !date) {

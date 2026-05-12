@@ -47,6 +47,7 @@ exports.reconcileMercadoPagoPayments = reconcileMercadoPagoPayments;
 exports.getPendingPayments = getPendingPayments;
 exports.confirmAppointmentManually = confirmAppointmentManually;
 exports.getAppointmentsByDate = getAppointmentsByDate;
+exports.getAppointmentsByDateRange = getAppointmentsByDateRange;
 const supabase_js_1 = require("@supabase/supabase-js");
 const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
@@ -112,6 +113,7 @@ async function getAppointmentById(id, businessId) {
       discount,
       payment_status,
       appointment_type,
+      custom_duration_minutes,
       notes,
       clients(id, name, phone),
       services(id, name, duration_minutes),
@@ -314,6 +316,7 @@ async function getAllAppointments(businessId, page, limit) {
       discount,
       payment_status,
       appointment_type,
+      custom_duration_minutes,
       notes,
       clients(id, name, phone),
       services(id, name, duration_minutes),
@@ -342,7 +345,7 @@ async function getAppointmentsByMonth(businessId, year, month) {
     const end = `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
     const { data, error } = await supabase
         .from("appointments")
-        .select(`id, appointment_date, start_time, end_time, charged_amount, discount, payment_status, appointment_type, notes, clients(id, name, phone), services(id, name, duration_minutes), appointment_services(service_id, services(id, name, current_price, duration_minutes))`)
+        .select(`id, appointment_date, start_time, end_time, charged_amount, discount, payment_status, appointment_type, custom_duration_minutes, notes, clients(id, name, phone), services(id, name, duration_minutes), appointment_services(service_id, services(id, name, current_price, duration_minutes))`)
         .eq("business_id", businessId)
         .gte("appointment_date", start)
         .lte("appointment_date", end)
@@ -470,6 +473,7 @@ async function getPendingPayments(businessId) {
       payment_status,
       payment_expires_at,
       mp_payment_id,
+      custom_duration_minutes,
       clients(id, name, phone),
       services(id, name, duration_minutes),
       appointment_services(service_id, services(id, name, current_price, duration_minutes))
@@ -525,6 +529,7 @@ async function getAppointmentsByDate(businessId, date) {
       discount,
       payment_status,
       appointment_type,
+      custom_duration_minutes,
       notes,
       clients(id, name, phone),
       services(id, name, duration_minutes),
@@ -542,4 +547,45 @@ async function getAppointmentsByDate(businessId, date) {
             ? (appt.clients[0] ?? null)
             : appt.clients,
     }));
+}
+async function getAppointmentsByDateRange(businessId, startDate, endDate) {
+    const { data, error } = await supabase
+        .from("appointments")
+        .select(`
+      id,
+      appointment_date,
+      start_time,
+      end_time,
+      charged_amount,
+      discount,
+      payment_status,
+      appointment_type,
+      custom_duration_minutes,
+      notes,
+      clients(id, name, phone),
+      services(id, name, duration_minutes),
+      appointment_services(service_id, services(id, name, current_price, duration_minutes))
+    `)
+        .eq("business_id", businessId)
+        .gte("appointment_date", startDate)
+        .lte("appointment_date", endDate)
+        .in("payment_status", ACTIVE_APPOINTMENT_STATUSES)
+        .order("appointment_date", { ascending: true })
+        .order("start_time", { ascending: true });
+    if (error)
+        throw new Error(error.message);
+    const grouped = {};
+    for (const appt of data ?? []) {
+        const normalized = normalizeAppointmentServices({
+            ...appt,
+            clients: Array.isArray(appt.clients)
+                ? (appt.clients[0] ?? null)
+                : appt.clients,
+        });
+        const key = normalized.appointment_date;
+        if (!grouped[key])
+            grouped[key] = [];
+        grouped[key].push(normalized);
+    }
+    return grouped;
 }
