@@ -3,11 +3,12 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.bookingLeadsRouter = void 0;
 const express_1 = require("express");
 const bookingLeadsService_1 = require("../services/bookingLeadsService");
+const auth_1 = require("../middleware/auth");
 exports.bookingLeadsRouter = (0, express_1.Router)();
-exports.bookingLeadsRouter.get("/", async (req, res) => {
+exports.bookingLeadsRouter.get("/", auth_1.requireBusinessAccess, async (req, res) => {
     const { businessId } = req.query;
     if (!businessId) {
-        res.status(400).json({ error: "businessId obrigatÃ³rio" });
+        res.status(400).json({ error: "businessId obrigatório" });
         return;
     }
     try {
@@ -20,7 +21,7 @@ exports.bookingLeadsRouter.get("/", async (req, res) => {
 exports.bookingLeadsRouter.post("/", async (req, res) => {
     const { businessId, clientName, clientPhone, clientEmail, gender, birthDate, selectedServiceId, } = req.body;
     if (!businessId) {
-        res.status(400).json({ error: "businessId obrigatÃ³rio" });
+        res.status(400).json({ error: "businessId obrigatório" });
         return;
     }
     try {

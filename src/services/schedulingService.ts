@@ -576,10 +576,6 @@ export async function getAvailableSlots(
 
   const workDays: number[] = (business?.work_days_of_week as number[] | null) ?? [1, 2, 3, 4, 5, 6];
   const targetDayOfWeek = getTargetDayOfWeek(date);
-  console.log("[scheduling] business.work_days_of_week:", business?.work_days_of_week, typeof business?.work_days_of_week);
-  console.log("[scheduling] targetDayOfWeek:", targetDayOfWeek);
-  console.log("[scheduling] workDays:", workDays);
-  console.log("[scheduling] includes check:", workDays.includes(targetDayOfWeek));
 
   const { workStart, workEnd } = getWorkRange(business, targetDayOfWeek);
   const lunchBreak = getLunchBreak(business);

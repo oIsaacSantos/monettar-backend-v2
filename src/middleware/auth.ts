@@ -42,7 +42,7 @@ export async function requireBusinessAccess(
 
   const token = getBearerToken(req);
   if (!token) {
-    next();
+    res.status(401).json({ error: "Token de autenticação obrigatório." });
     return;
   }
 
@@ -51,24 +51,24 @@ export async function requireBusinessAccess(
     const user = userData.user;
 
     if (userError || !user) {
-      res.status(401).json({ error: "Token invalido." });
+      res.status(401).json({ error: "Token inválido ou expirado." });
       return;
     }
 
-    const { data: businesses, error: businessError } = await supabase
+    const { data: business, error: businessError } = await supabase
       .from("businesses")
       .select("id")
       .eq("id", businessId)
       .eq("user_id", user.id)
-      .limit(1);
+      .single();
 
-    if (businessError) {
+    if (businessError && businessError.code !== "PGRST116") {
       console.error("[auth] erro ao validar acesso ao negocio:", businessError.message);
       res.status(500).json({ error: "Erro ao validar acesso ao negocio." });
       return;
     }
 
-    if (!businesses || businesses.length === 0) {
+    if (!business) {
       res.status(403).json({ error: "Acesso negado a este negócio." });
       return;
     }

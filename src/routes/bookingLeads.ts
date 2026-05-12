@@ -4,14 +4,15 @@ import {
   getBookingLeads,
   upsertBookingLead,
 } from "../services/bookingLeadsService";
+import { requireBusinessAccess } from "../middleware/auth";
 
 export const bookingLeadsRouter = Router();
 
-bookingLeadsRouter.get("/", async (req: Request, res: Response) => {
+bookingLeadsRouter.get("/", requireBusinessAccess, async (req: Request, res: Response) => {
   const { businessId } = req.query;
 
   if (!businessId) {
-    res.status(400).json({ error: "businessId obrigatÃ³rio" });
+    res.status(400).json({ error: "businessId obrigatório" });
     return;
   }
 
@@ -34,7 +35,7 @@ bookingLeadsRouter.post("/", async (req: Request, res: Response) => {
   } = req.body;
 
   if (!businessId) {
-    res.status(400).json({ error: "businessId obrigatÃ³rio" });
+    res.status(400).json({ error: "businessId obrigatório" });
     return;
   }
 
