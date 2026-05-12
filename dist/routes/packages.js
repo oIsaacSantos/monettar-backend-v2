@@ -123,6 +123,30 @@ exports.packagesRouter.delete("/:id", async (req, res) => {
     res.json(data);
 });
 // ─── Client Packages ──────────────────────────────────────────────────────────
+exports.packagesRouter.patch("/client/:id", async (req, res) => {
+    const { id } = req.params;
+    const { sessionsUsed, status } = req.body;
+    const updates = {};
+    if (sessionsUsed !== undefined)
+        updates.sessions_used = sessionsUsed;
+    if (status !== undefined)
+        updates.status = status;
+    if (Object.keys(updates).length === 0) {
+        res.status(400).json({ error: "Nenhum campo para atualizar" });
+        return;
+    }
+    const { data, error } = await supabase
+        .from("client_packages")
+        .update(updates)
+        .eq("id", id)
+        .select()
+        .single();
+    if (error) {
+        res.status(500).json({ error: error.message });
+        return;
+    }
+    res.json(data);
+});
 exports.packagesRouter.get("/client", async (req, res) => {
     const { businessId, clientId } = req.query;
     if (!businessId || !clientId) {
